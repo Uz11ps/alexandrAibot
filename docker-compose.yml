@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  bot:
+    build: .
+    container_name: alexandr-profi-bot
+    restart: unless-stopped
+    volumes:
+      - ./storage:/app/storage
+      - ./credentials:/app/credentials
+      - ./config:/app/config
+      - ./data:/app/data
+      - ./.env:/app/.env
+    environment:
+      - PYTHONUNBUFFERED=1
+    networks:
+      - bot-network
+
+networks:
+  bot-network:
+    driver: bridge
+
