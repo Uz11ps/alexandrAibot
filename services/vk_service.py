@@ -103,7 +103,9 @@ class VKService:
                 try:
                     temp_folder = Path("storage/temp")
                     temp_folder.mkdir(parents=True, exist_ok=True)
-                    temp_path = temp_folder / f"{photo_path.replace('/', '_').replace('\\', '_')}.jpg"
+                    # Заменяем слэши на подчеркивания для имени файла
+        safe_filename = photo_path.replace('/', '_').replace('\\', '_')
+        temp_path = temp_folder / f"{safe_filename}.jpg"
                     
                     if self.google_drive.download_file(photo_path, str(temp_path)):
                         logger.info(f"Фото скачано из Google Drive (fallback): {temp_path}")
