@@ -286,6 +286,9 @@ class VKService:
             
             if attachments:
                 post_params['attachments'] = ",".join(attachments)
+                logger.info(f"Публикуем пост с {len(attachments)} вложениями: {post_params['attachments']}")
+            else:
+                logger.warning("⚠️ Пост публикуется БЕЗ фотографий! Проверьте логи выше для диагностики.")
             
             post_id = self.vk.wall.post(**post_params)
             
