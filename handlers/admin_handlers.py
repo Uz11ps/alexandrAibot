@@ -154,7 +154,17 @@ class EmployeeManagementStates(StatesGroup):
 
 def is_admin(user_id: int) -> bool:
     """Проверяет, является ли пользователь администратором"""
-    return user_id == settings.TELEGRAM_ADMIN_ID
+    # Проверяем основной ID администратора
+    if user_id == settings.TELEGRAM_ADMIN_ID:
+        return True
+    
+    # Проверяем дополнительные ID администраторов
+    if settings.TELEGRAM_ADMIN_IDS:
+        admin_ids = [int(id.strip()) for id in settings.TELEGRAM_ADMIN_IDS.split(',') if id.strip()]
+        if user_id in admin_ids:
+            return True
+    
+    return False
 
 
 @router.message(Command("start"))

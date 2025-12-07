@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     # Telegram
     TELEGRAM_BOT_TOKEN: str
     TELEGRAM_ADMIN_ID: int
+    TELEGRAM_ADMIN_IDS: Optional[str] = None  # Дополнительные администраторы через запятую (например: "123456,789012")
     TELEGRAM_CHANNEL_ID: Optional[str] = None
     
     # VK
