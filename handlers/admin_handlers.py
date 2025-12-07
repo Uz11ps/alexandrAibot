@@ -1,5 +1,6 @@
 """Обработчики команд администратора"""
 import logging
+from datetime import datetime, timedelta
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
@@ -30,6 +31,10 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(text="📝 Сгенерировать пост", callback_data="menu_generate"),
             InlineKeyboardButton(text="📋 Отчеты", callback_data="menu_reports")
+        ],
+        [
+            InlineKeyboardButton(text="🔗 Управление источниками", callback_data="menu_sources"),
+            InlineKeyboardButton(text="📅 Запланированные посты", callback_data="menu_scheduled_posts")
         ],
         [
             InlineKeyboardButton(text="🔄 Обновить меню", callback_data="menu_refresh")
@@ -127,6 +132,24 @@ class PostTypeEditStates(StatesGroup):
     waiting_for_day = State()
     waiting_for_name = State()
     waiting_for_description = State()
+
+
+class EmployeeManagementStates(StatesGroup):
+    """Состояния для управления сотрудниками"""
+    waiting_for_employee_id = State()
+    waiting_for_employee_name = State()
+    waiting_for_employee_role = State()
+    waiting_for_request_text = State()
+    waiting_for_request_type = State()
+
+
+class EmployeeManagementStates(StatesGroup):
+    """Состояния для управления сотрудниками"""
+    waiting_for_employee_id = State()
+    waiting_for_employee_name = State()
+    waiting_for_employee_role = State()
+    waiting_for_request_text = State()
+    waiting_for_request_type = State()
 
 
 def is_admin(user_id: int) -> bool:
@@ -348,19 +371,29 @@ async def handle_generate_post(callback: CallbackQuery):
         await safe_answer_callback(callback, "Неизвестный тип поста", show_alert=True)
         return
     
+    day_name, generator = post_generators[post_type]
+    
+    # Показываем индикатор загрузки
     await safe_answer_callback(callback, "Генерация поста...")
+    await safe_edit_message(
+        callback,
+        f"⏳ <b>Генерирую пост для {day_name}...</b>\n\n"
+        f"Пожалуйста, подождите. Это может занять некоторое время.\n\n"
+        f"📝 Анализирую материалы...\n"
+        f"🤖 Генерирую текст...",
+        reply_markup=None
+    )
     
     try:
-        day_name, generator = post_generators[post_type]
         logger.info(f"Начало генерации поста для {day_name} (тип: {post_type})")
         
         post_text, photos = await generator()
         
         logger.info(f"Пост для {day_name} сгенерирован успешно. Текст: {len(post_text)} символов, фото: {len(photos)}")
         
-        # Отправляем на согласование
-        logger.info(f"Отправка поста на согласование...")
-        await dependencies.post_service.send_for_approval(post_text, photos)
+        # Отправляем на согласование с указанием дня недели
+        logger.info(f"Отправка поста на согласование для дня: {post_type}")
+        await dependencies.post_service.send_for_approval(post_text, photos, day_of_week=post_type)
         logger.info(f"Пост отправлен на согласование")
         
         await safe_edit_message(
@@ -591,20 +624,52 @@ async def schedule_process_time(message: Message, state: FSMContext):
 async def menu_employees(callback: CallbackQuery):
     """Меню сотрудников"""
     if not is_admin(callback.from_user.id):
-        await callback.answer("У вас нет доступа.", show_alert=True)
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
         return
+    
+    if not dependencies.employee_service:
+        await safe_answer_callback(callback, "Сервис недоступен", show_alert=True)
+        return
+    
+    employees = dependencies.employee_service.get_all_employees()
+    pending_requests = dependencies.employee_service.get_pending_requests()
+    settings_service = dependencies.employee_service.settings_service
+    
+    reminder_interval = settings_service.get_reminder_interval()
+    response_timeout = settings_service.get_response_timeout()
     
     employees_text = (
         "👥 <b>Управление сотрудниками</b>\n\n"
-        "Функции:\n"
-        "• Запрос материалов у сотрудников\n"
-        "• Автоматические напоминания\n"
-        "• Эскалация при отсутствии ответа\n\n"
-        "Функция будет доработана."
+        f"📊 <b>Статистика:</b>\n"
+        f"• Всего сотрудников: {len(employees)}\n"
+        f"• Активных запросов: {len(pending_requests)}\n\n"
+        f"⚙️ <b>Настройки таймаутов:</b>\n"
+        f"• Интервал напоминаний: <b>{reminder_interval} часов</b>\n"
+        f"• Таймаут эскалации: <b>{response_timeout} часов</b>\n\n"
+        f"<b>Функции:</b>\n"
+        f"• Запрос материалов у сотрудников\n"
+        f"• Автоматические напоминания\n"
+        f"• Эскалация при отсутствии ответа"
     )
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="menu_back")]
+        [
+            InlineKeyboardButton(text="📋 Список сотрудников", callback_data="employees_list"),
+            InlineKeyboardButton(text="➕ Добавить сотрудника", callback_data="employee_add")
+        ],
+        [
+            InlineKeyboardButton(text="📤 Отправить запрос", callback_data="employee_request"),
+            InlineKeyboardButton(text="⏳ Активные запросы", callback_data="employees_pending")
+        ],
+        [
+            InlineKeyboardButton(text="📜 История запросов", callback_data="employees_history")
+        ],
+        [
+            InlineKeyboardButton(text="⚙️ Настройки таймаутов", callback_data="employee_settings")
+        ],
+        [
+            InlineKeyboardButton(text="◀️ Назад", callback_data="menu_back")
+        ]
     ])
     
     await safe_edit_message(callback, employees_text, reply_markup=keyboard)
@@ -623,15 +688,537 @@ async def menu_reports(callback: CallbackQuery):
         "Доступные отчеты:\n"
         "• Отчеты за неделю\n"
         "• История публикаций\n"
-        "• Переписка с сотрудниками\n\n"
-        "Функция будет доработана."
+        "• Переписка с сотрудниками"
     )
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="menu_back")]
+        [
+            InlineKeyboardButton(text="📊 Отчеты за неделю", callback_data="reports_weekly")
+        ],
+        [
+            InlineKeyboardButton(text="📚 История публикаций", callback_data="reports_history")
+        ],
+        [
+            InlineKeyboardButton(text="💬 Переписка с сотрудниками", callback_data="reports_conversations")
+        ],
+        [
+            InlineKeyboardButton(text="◀️ Назад", callback_data="menu_back")
+        ]
     ])
     
     await safe_edit_message(callback, reports_text, reply_markup=keyboard)
+    await safe_answer_callback(callback)
+
+
+@router.callback_query(F.data == "menu_scheduled_posts")
+async def menu_scheduled_posts(callback: CallbackQuery):
+    """Меню запланированных постов"""
+    if not is_admin(callback.from_user.id):
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
+        return
+    
+    if not dependencies.scheduled_posts_service:
+        await safe_answer_callback(callback, "Сервис недоступен", show_alert=True)
+        return
+    
+    scheduled_posts = dependencies.scheduled_posts_service.get_all_scheduled_posts()
+    
+    if not scheduled_posts:
+        posts_text = (
+            "📅 <b>Запланированные посты</b>\n\n"
+            "Нет запланированных постов.\n\n"
+            "Посты будут появляться здесь после того, как вы нажмете 'Принять' при генерации поста."
+        )
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="menu_back")]
+        ])
+    else:
+        day_names = {
+            'monday': 'Понедельник',
+            'tuesday': 'Вторник',
+            'wednesday': 'Среда',
+            'thursday': 'Четверг',
+            'friday': 'Пятница',
+            'saturday': 'Суббота'
+        }
+        
+        posts_list = []
+        for post in scheduled_posts:
+            day_name = day_names.get(post.day_of_week, post.day_of_week)
+            created_date = datetime.fromisoformat(post.created_at).strftime("%d.%m %H:%M")
+            text_preview = post.post_text[:100].replace('\n', ' ') + "..." if len(post.post_text) > 100 else post.post_text.replace('\n', ' ')
+            photos_count = len(post.photos)
+            
+            posts_list.append(
+                f"📅 <b>{day_name}</b>\n"
+                f"📝 {text_preview}\n"
+                f"📸 Фото: {photos_count}\n"
+                f"🕐 Создан: {created_date}"
+            )
+        
+        posts_text = (
+            f"📅 <b>Запланированные посты</b>\n\n"
+            f"Всего запланировано: {len(scheduled_posts)}\n\n"
+            f"{chr(10).join(posts_list)}"
+        )
+        
+        keyboard_buttons = []
+        for post in scheduled_posts:
+            day_name = day_names.get(post.day_of_week, post.day_of_week)
+            button_text = f"📅 {day_name}"
+            if len(button_text) > 30:
+                button_text = button_text[:27] + "..."
+            keyboard_buttons.append([
+                InlineKeyboardButton(
+                    text=button_text,
+                    callback_data=f"view_scheduled_post_{post.day_of_week}"
+                )
+            ])
+        
+        keyboard_buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu_back")])
+        keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+    
+    await safe_edit_message(callback, posts_text, reply_markup=keyboard)
+    await safe_answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("view_scheduled_post_"))
+async def view_scheduled_post(callback: CallbackQuery, state: FSMContext):
+    """Просмотр конкретного запланированного поста"""
+    if not is_admin(callback.from_user.id):
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
+        return
+    
+    if not dependencies.scheduled_posts_service:
+        await safe_answer_callback(callback, "Сервис недоступен", show_alert=True)
+        return
+    
+    # Очищаем состояние FSM если было установлено (например, при отмене редактирования)
+    current_state = await state.get_state()
+    if current_state:
+        await safe_clear_state(state)
+    
+    day_of_week = callback.data.replace("view_scheduled_post_", "")
+    scheduled_post = dependencies.scheduled_posts_service.get_scheduled_post(day_of_week)
+    
+    if not scheduled_post:
+        await safe_answer_callback(callback, "Запланированный пост не найден", show_alert=True)
+        return
+    
+    day_names = {
+        'monday': 'Понедельник',
+        'tuesday': 'Вторник',
+        'wednesday': 'Среда',
+        'thursday': 'Четверг',
+        'friday': 'Пятница',
+        'saturday': 'Суббота'
+    }
+    day_name = day_names.get(day_of_week, day_of_week)
+    created_date = datetime.fromisoformat(scheduled_post.created_at).strftime("%d.%m.%Y %H:%M")
+    
+    # Обрезаем текст если слишком длинный для отображения
+    display_text = scheduled_post.post_text
+    if len(display_text) > 3000:
+        display_text = display_text[:3000] + "\n\n... (текст обрезан)"
+    
+    post_text = (
+        f"📅 <b>Запланированный пост</b>\n\n"
+        f"📆 День: <b>{day_name}</b>\n"
+        f"🕐 Создан: {created_date}\n"
+        f"📸 Фото: {len(scheduled_post.photos)}\n\n"
+        f"<b>Текст поста:</b>\n\n{display_text}"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✏️ Редактировать", callback_data=f"edit_scheduled_post_{day_of_week}"),
+            InlineKeyboardButton(text="🗑️ Удалить", callback_data=f"delete_scheduled_post_{day_of_week}")
+        ],
+        [InlineKeyboardButton(text="◀️ Назад к списку", callback_data="menu_scheduled_posts")]
+    ])
+    
+    await safe_edit_message(callback, post_text, reply_markup=keyboard)
+    await safe_answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("delete_scheduled_post_"))
+async def delete_scheduled_post(callback: CallbackQuery):
+    """Удаляет запланированный пост"""
+    if not is_admin(callback.from_user.id):
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
+        return
+    
+    if not dependencies.scheduled_posts_service:
+        await safe_answer_callback(callback, "Сервис недоступен", show_alert=True)
+        return
+    
+    day_of_week = callback.data.replace("delete_scheduled_post_", "")
+    
+    day_names = {
+        'monday': 'Понедельник',
+        'tuesday': 'Вторник',
+        'wednesday': 'Среда',
+        'thursday': 'Четверг',
+        'friday': 'Пятница',
+        'saturday': 'Суббота'
+    }
+    day_name = day_names.get(day_of_week, day_of_week)
+    
+    success = dependencies.scheduled_posts_service.remove_scheduled_post(day_of_week)
+    
+    if success:
+        await safe_answer_callback(callback, f"Пост для {day_name} удален", show_alert=True)
+        await menu_scheduled_posts(callback)  # Возвращаемся к списку
+    else:
+        await safe_answer_callback(callback, "Ошибка при удалении поста", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("edit_scheduled_post_"))
+async def edit_scheduled_post_start(callback: CallbackQuery, state: FSMContext):
+    """Начинает редактирование запланированного поста"""
+    if not is_admin(callback.from_user.id):
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
+        return
+    
+    if not dependencies.scheduled_posts_service:
+        await safe_answer_callback(callback, "Сервис недоступен", show_alert=True)
+        return
+    
+    day_of_week = callback.data.replace("edit_scheduled_post_", "")
+    scheduled_post = dependencies.scheduled_posts_service.get_scheduled_post(day_of_week)
+    
+    if not scheduled_post:
+        await safe_answer_callback(callback, "Запланированный пост не найден", show_alert=True)
+        return
+    
+    # Сохраняем данные в состояние для редактирования
+    await state.update_data(
+        scheduled_post_day=day_of_week,
+        original_post_text=scheduled_post.post_text,
+        original_photos=scheduled_post.photos
+    )
+    await state.set_state(PostApprovalStates.waiting_for_edits)
+    
+    day_names = {
+        'monday': 'Понедельник',
+        'tuesday': 'Вторник',
+        'wednesday': 'Среда',
+        'thursday': 'Четверг',
+        'friday': 'Пятница',
+        'saturday': 'Суббота'
+    }
+    day_name = day_names.get(day_of_week, day_of_week)
+    
+    await safe_edit_message(
+        callback,
+        f"✏️ <b>Редактирование запланированного поста</b>\n\n"
+        f"📅 День: <b>{day_name}</b>\n\n"
+        f"Отправьте новый текст поста или правки:\n\n"
+        f"Текущий текст:\n{scheduled_post.post_text[:500]}...",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data=f"view_scheduled_post_{day_of_week}")]
+        ])
+    )
+    await safe_answer_callback(callback)
+
+
+
+
+@router.callback_query(F.data == "reports_weekly")
+async def reports_weekly(callback: CallbackQuery):
+    """Отчеты за неделю"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("У вас нет доступа.", show_alert=True)
+        return
+    
+    if not dependencies.employee_service or not dependencies.file_service:
+        await safe_answer_callback(callback, "Сервисы недоступны", show_alert=True)
+        return
+    
+    # Получаем статистику
+    stats = dependencies.employee_service.get_weekly_statistics()
+    archived_posts = await dependencies.file_service.get_archived_posts(days=7)
+    
+    # Формируем отчет
+    type_names = {
+        "photo": "📸 Фотографии",
+        "document": "📄 Документы",
+        "info": "💬 Информация",
+        "general": "📋 Общие"
+    }
+    
+    request_types_text = "\n".join([
+        f"• {type_names.get(t, t)}: {count}"
+        for t, count in stats['request_types'].items()
+    ]) if stats['request_types'] else "• Нет запросов"
+    
+    report_text = (
+        f"📊 <b>Отчет за неделю</b>\n\n"
+        f"📅 <b>Период:</b> {datetime.now().strftime('%d.%m.%Y')}\n\n"
+        f"📝 <b>Публикации:</b>\n"
+        f"• Опубликовано постов: <b>{len(archived_posts)}</b>\n\n"
+        f"👥 <b>Сотрудники:</b>\n"
+        f"• Всего сотрудников: <b>{stats['total_employees']}</b>\n"
+        f"• С активными запросами: <b>{stats['employees_with_requests']}</b>\n\n"
+        f"📋 <b>Запросы:</b>\n"
+        f"• Всего запросов: <b>{stats['total_requests']}</b>\n"
+        f"• Ожидают ответа: <b>{stats['pending_requests']}</b>\n"
+        f"• Получено ответов: <b>{stats['answered_requests']}</b>\n\n"
+        f"📊 <b>По типам:</b>\n{request_types_text}"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="◀️ Назад к отчетам", callback_data="menu_reports")]
+    ])
+    
+    await safe_edit_message(callback, report_text, reply_markup=keyboard)
+    await safe_answer_callback(callback)
+
+
+@router.callback_query(F.data == "reports_history")
+async def reports_history(callback: CallbackQuery):
+    """История публикаций"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("У вас нет доступа.", show_alert=True)
+        return
+    
+    if not dependencies.file_service:
+        await safe_answer_callback(callback, "Сервис недоступен", show_alert=True)
+        return
+    
+    archived_posts = await dependencies.file_service.get_archived_posts(days=30)
+    
+    if not archived_posts:
+        report_text = (
+            "📚 <b>История публикаций</b>\n\n"
+            "За последние 30 дней публикаций не найдено."
+        )
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад к отчетам", callback_data="menu_reports")]
+        ])
+        await safe_edit_message(callback, report_text, reply_markup=keyboard)
+        await safe_answer_callback(callback)
+        return
+    
+    # Показываем первые 10 постов
+    posts_list = "\n".join([
+        f"{i+1}. {post['date_str']}"
+        for i, post in enumerate(archived_posts[:10])
+    ])
+    
+    report_text = (
+        f"📚 <b>История публикаций</b>\n\n"
+        f"Всего найдено: <b>{len(archived_posts)}</b> постов\n\n"
+        f"<b>Последние публикации:</b>\n{posts_list}"
+    )
+    
+    # Создаем кнопки для просмотра постов
+    keyboard_buttons = []
+    for i, post in enumerate(archived_posts[:5]):  # Показываем первые 5
+        keyboard_buttons.append([
+            InlineKeyboardButton(
+                text=f"📄 {post['date_str']}",
+                callback_data=f"view_post_{post['filename']}"
+            )
+        ])
+    
+    keyboard_buttons.append([
+        InlineKeyboardButton(text="◀️ Назад к отчетам", callback_data="menu_reports")
+    ])
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+    
+    await safe_edit_message(callback, report_text, reply_markup=keyboard)
+    await safe_answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("view_post_"))
+async def view_post(callback: CallbackQuery):
+    """Просмотр конкретного поста"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("У вас нет доступа.", show_alert=True)
+        return
+    
+    if not dependencies.file_service:
+        await safe_answer_callback(callback, "Сервис недоступен", show_alert=True)
+        return
+    
+    filename = callback.data.replace("view_post_", "")
+    post_content = await dependencies.file_service.get_post_content(filename)
+    
+    if not post_content:
+        await safe_answer_callback(callback, "Пост не найден", show_alert=True)
+        return
+    
+    # Обрезаем текст если слишком длинный (Telegram лимит ~4096 символов)
+    if len(post_content) > 4000:
+        post_content = post_content[:4000] + "\n\n... (текст обрезан)"
+    
+    # Извлекаем дату из имени файла
+    try:
+        date_str = filename.replace("post_", "").replace(".txt", "")
+        date_str = date_str.replace("-", ":", 2).replace("_", ":", 1)
+        date_obj = datetime.strptime(date_str, "%Y:%m:%d:%H:%M:%S")
+        formatted_date = date_obj.strftime("%d.%m.%Y %H:%M")
+    except:
+        formatted_date = "Дата неизвестна"
+    
+    report_text = (
+        f"📄 <b>Публикация от {formatted_date}</b>\n\n"
+        f"{post_content}"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="◀️ Назад к истории", callback_data="reports_history")]
+    ])
+    
+    await safe_edit_message(callback, report_text, reply_markup=keyboard)
+    await safe_answer_callback(callback)
+
+
+@router.callback_query(F.data == "reports_conversations")
+async def reports_conversations(callback: CallbackQuery):
+    """Переписка с сотрудниками"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("У вас нет доступа.", show_alert=True)
+        return
+    
+    if not dependencies.employee_service:
+        await safe_answer_callback(callback, "Сервис недоступен", show_alert=True)
+        return
+    
+    conversations = dependencies.employee_service.get_all_conversations()
+    
+    if not conversations:
+        report_text = (
+            "💬 <b>Переписка с сотрудниками</b>\n\n"
+            "Переписки не найдены."
+        )
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад к отчетам", callback_data="menu_reports")]
+        ])
+        await safe_edit_message(callback, report_text, reply_markup=keyboard)
+        await safe_answer_callback(callback)
+        return
+    
+    # Формируем список переписок
+    conversations_list = []
+    for conv in conversations[:10]:  # Показываем первые 10
+        active_count = len([r for r in conv['requests'] if not r.answered])
+        total_count = len(conv['requests'])
+        
+        status = "🟢" if active_count > 0 else "⚪"
+        conversations_list.append(
+            f"{status} {conv['employee_name']} ({conv['employee_role']})\n"
+            f"   Запросов: {total_count} (активных: {active_count})"
+        )
+    
+    conversations_text = "\n\n".join(conversations_list)
+    
+    report_text = (
+        f"💬 <b>Переписка с сотрудниками</b>\n\n"
+        f"Всего сотрудников с переписками: <b>{len(conversations)}</b>\n\n"
+        f"{conversations_text}"
+    )
+    
+    # Создаем кнопки для просмотра переписок
+    keyboard_buttons = []
+    for conv in conversations[:5]:  # Показываем первые 5
+        keyboard_buttons.append([
+            InlineKeyboardButton(
+                text=f"👤 {conv['employee_name']}",
+                callback_data=f"view_conversation_{conv['employee_id']}"
+            )
+        ])
+    
+    keyboard_buttons.append([
+        InlineKeyboardButton(text="◀️ Назад к отчетам", callback_data="menu_reports")
+    ])
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+    
+    await safe_edit_message(callback, report_text, reply_markup=keyboard)
+    await safe_answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("view_conversation_"))
+async def view_conversation(callback: CallbackQuery):
+    """Просмотр переписки с конкретным сотрудником"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("У вас нет доступа.", show_alert=True)
+        return
+    
+    if not dependencies.employee_service:
+        await safe_answer_callback(callback, "Сервис недоступен", show_alert=True)
+        return
+    
+    try:
+        employee_id = int(callback.data.replace("view_conversation_", ""))
+    except ValueError:
+        await safe_answer_callback(callback, "Неверный ID сотрудника", show_alert=True)
+        return
+    
+    employee = dependencies.employee_service.get_employee(employee_id)
+    if not employee:
+        await safe_answer_callback(callback, "Сотрудник не найден", show_alert=True)
+        return
+    
+    # Получаем все запросы для сотрудника
+    active_requests = [
+        req for req in dependencies.employee_service.active_requests.values()
+        if req.employee_id == employee_id
+    ]
+    history_requests = dependencies.employee_service.get_request_history_for_employee(employee_id)
+    all_requests = active_requests + history_requests
+    
+    if not all_requests:
+        report_text = (
+            f"💬 <b>Переписка с {employee.name}</b>\n\n"
+            f"Переписки не найдены."
+        )
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад к перепискам", callback_data="reports_conversations")]
+        ])
+        await safe_edit_message(callback, report_text, reply_markup=keyboard)
+        await safe_answer_callback(callback)
+        return
+    
+    # Формируем историю переписки
+    conversation_lines = []
+    for req in sorted(all_requests, key=lambda x: x.created_at, reverse=True)[:5]:  # Последние 5
+        status = "🟢 Активен" if not req.answered else "✅ Завершен"
+        created = datetime.fromisoformat(req.created_at).strftime("%d.%m %H:%M")
+        
+        conversation_lines.append(
+            f"<b>{status}</b> - {created}\n"
+            f"Тип: {req.request_type}\n"
+            f"Запрос: {req.request_text[:100]}..."
+        )
+        
+        if req.answered and req.response:
+            response_time = datetime.fromisoformat(req.response_at).strftime("%d.%m %H:%M")
+            conversation_lines.append(f"Ответ ({response_time}): {req.response[:100]}...")
+        
+        conversation_lines.append("")  # Пустая строка между запросами
+    
+    conversation_text = "\n".join(conversation_lines)
+    
+    report_text = (
+        f"💬 <b>Переписка с {employee.name}</b>\n"
+        f"💼 Роль: {employee.role}\n"
+        f"🆔 ID: {employee_id}\n\n"
+        f"<b>Последние запросы:</b>\n\n{conversation_text}"
+    )
+    
+    # Обрезаем если слишком длинно
+    if len(report_text) > 4000:
+        report_text = report_text[:4000] + "\n\n... (текст обрезан)"
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="◀️ Назад к перепискам", callback_data="reports_conversations")]
+    ])
+    
+    await safe_edit_message(callback, report_text, reply_markup=keyboard)
     await safe_answer_callback(callback)
 
 
@@ -853,7 +1440,7 @@ async def post_type_process_description(message: Message, state: FSMContext):
     await safe_clear_state(state)
 
 
-@router.callback_query(F.data == "approve_post")
+@router.callback_query(F.data.startswith("approve_post"))
 async def approve_post(callback: CallbackQuery):
     """Обработчик кнопки 'Принять' пост"""
     if not is_admin(callback.from_user.id):
@@ -864,6 +1451,16 @@ async def approve_post(callback: CallbackQuery):
         await safe_answer_callback(callback, "Сервис недоступен", show_alert=True)
         return
     
+    # Извлекаем день недели из callback_data (approve_post_monday -> monday)
+    day_of_week = None
+    if callback.data == "approve_post":
+        # Старый формат без дня недели - оставляем None для обратной совместимости
+        day_of_week = None
+        logger.info("Получен callback approve_post без указания дня недели (старый формат)")
+    elif callback.data.startswith("approve_post_"):
+        day_of_week = callback.data.replace("approve_post_", "")
+        logger.info(f"Извлечен день недели из callback_data: {day_of_week}")
+    
     try:
         # Получаем текст поста из сообщения
         post_text = callback.message.text or callback.message.caption
@@ -872,26 +1469,176 @@ async def approve_post(callback: CallbackQuery):
             if "Черновик поста для согласования:" in post_text:
                 post_text = post_text.split("\n\n", 1)[1] if "\n\n" in post_text else post_text
         
-        # Получаем фотографии если есть
-        photos = []
-        if callback.message.photo:
-            # TODO: Сохранить фото и получить путь
-            pass
+        # Получаем фотографии из сохраненных путей
+        photos = dependencies.telegram_service.get_draft_photos(callback.message.message_id)
+        logger.info(f"Получены фотографии из draft_photos: {photos}")
         
-        # Публикуем пост
+        # Если фотографии не найдены в сохраненных путях, пытаемся скачать из сообщения
+        if not photos and callback.message.photo:
+            try:
+                logger.info("Фотографии не найдены в draft_photos, скачиваем из сообщения")
+                # Скачиваем фото из сообщения
+                photo = callback.message.photo[-1]  # Берем фото наибольшего размера
+                file_info = await callback.message.bot.get_file(photo.file_id)
+                
+                # Сохраняем во временную папку
+                temp_path = dependencies.file_service.get_folder_path('photos') / f"{photo.file_id}.jpg"
+                temp_path.parent.mkdir(parents=True, exist_ok=True)
+                await callback.message.bot.download_file(file_info.file_path, destination=str(temp_path))
+                photos = [str(temp_path.absolute())]  # Используем абсолютный путь
+                logger.info(f"Скачана фотография из сообщения: {temp_path.absolute()}")
+            except Exception as e:
+                logger.error(f"Ошибка при скачивании фотографии: {e}", exc_info=True)
+        
+        # Проверяем существование файлов
+        if photos:
+            existing_photos = []
+            for photo_path in photos:
+                from pathlib import Path
+                photo_path_obj = Path(photo_path)
+                if photo_path_obj.exists():
+                    existing_photos.append(str(photo_path_obj.absolute()))
+                    logger.info(f"Фото существует: {photo_path_obj.absolute()}")
+                else:
+                    logger.warning(f"Фото не найдено: {photo_path}")
+            photos = existing_photos
+        
+        # Если указан день недели, сохраняем пост для планирования
+        if day_of_week:
+            if not dependencies.scheduled_posts_service:
+                logger.error("scheduled_posts_service не инициализирован, публикуем немедленно")
+                # Fallback: публикуем немедленно если сервис не доступен
+                results = await dependencies.post_service.publish_approved_post(post_text, photos or [])
+                await safe_answer_callback(callback, "Пост опубликован!", show_alert=True)
+                await safe_edit_message(
+                    callback,
+                    f"✅ <b>Пост опубликован!</b>\n\n"
+                    f"Telegram: {results.get('telegram', 'N/A')}\n"
+                    f"VK: {results.get('vk', 'N/A')}"
+                )
+                return
+            
+            logger.info(f"Сохраняем пост для планирования на день: {day_of_week}")
+            dependencies.scheduled_posts_service.add_scheduled_post(
+                day_of_week=day_of_week,
+                post_text=post_text,
+                photos=photos or [],
+                admin_id=callback.from_user.id
+            )
+            
+            day_names = {
+                'monday': 'Понедельник',
+                'tuesday': 'Вторник',
+                'wednesday': 'Среда',
+                'thursday': 'Четверг',
+                'friday': 'Пятница',
+                'saturday': 'Суббота'
+            }
+            day_name = day_names.get(day_of_week, day_of_week)
+            
+            await safe_answer_callback(callback, f"Пост запланирован на {day_name}!", show_alert=True)
+            await safe_edit_message(
+                callback,
+                f"✅ <b>Пост запланирован!</b>\n\n"
+                f"📅 День: <b>{day_name}</b>\n"
+                f"⏰ Время публикации: согласно расписанию\n\n"
+                f"Пост будет автоматически опубликован в указанное время."
+            )
+        else:
+            # Если день недели не указан, публикуем немедленно (старое поведение или fallback)
+            logger.info(f"День недели не указан, публикуем пост немедленно. Callback data: {callback.data}")
+            logger.info(f"Публикация поста с {len(photos) if photos else 0} фотографиями")
+            results = await dependencies.post_service.publish_approved_post(post_text, photos or [])
+            
+            await safe_answer_callback(callback, "Пост опубликован!", show_alert=True)
+            await safe_edit_message(
+                callback,
+                f"✅ <b>Пост опубликован!</b>\n\n"
+                f"Telegram: {results.get('telegram', 'N/A')}\n"
+                f"VK: {results.get('vk', 'N/A')}"
+            )
+    
+    except Exception as e:
+        logger.error(f"Ошибка при обработке поста: {e}")
+        await safe_answer_callback(callback, "Ошибка при обработке поста", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("publish_now"))
+async def publish_now(callback: CallbackQuery):
+    """Обработчик кнопки 'Отправить сейчас' - публикует пост немедленно"""
+    if not is_admin(callback.from_user.id):
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
+        return
+    
+    if not dependencies.post_service:
+        await safe_answer_callback(callback, "Сервис недоступен", show_alert=True)
+        return
+    
+    try:
+        await safe_answer_callback(callback, "Публикую пост...")
+        
+        # Получаем текст поста из сообщения
+        post_text = callback.message.text or callback.message.caption or ""
+        if post_text:
+            # Убираем заголовок "Черновик поста для согласования:" и другие префиксы
+            if "Черновик поста для согласования:" in post_text:
+                post_text = post_text.split("\n\n", 1)[1] if "\n\n" in post_text else post_text.replace("Черновик поста для согласования:", "").strip()
+            # Убираем HTML теги из заголовка
+            post_text = post_text.replace("<b>Черновик поста для согласования:</b>", "").replace("📝 Полный текст ниже ⬇️", "").strip()
+        
+        if not post_text:
+            await safe_answer_callback(callback, "Не удалось найти текст поста", show_alert=True)
+            return
+        
+        # Получаем фотографии из сохраненных путей
+        photos = dependencies.telegram_service.get_draft_photos(callback.message.message_id)
+        logger.info(f"Получены фотографии из draft_photos: {photos}")
+        
+        # Если фотографии не найдены в сохраненных путях, пытаемся скачать из сообщения
+        if not photos and callback.message.photo:
+            try:
+                logger.info("Фотографии не найдены в draft_photos, скачиваем из сообщения")
+                # Скачиваем фото из сообщения
+                photo = callback.message.photo[-1]  # Берем фото наибольшего размера
+                file_info = await callback.message.bot.get_file(photo.file_id)
+                
+                # Сохраняем во временную папку
+                temp_path = dependencies.file_service.get_folder_path('photos') / f"{photo.file_id}.jpg"
+                temp_path.parent.mkdir(parents=True, exist_ok=True)
+                await callback.message.bot.download_file(file_info.file_path, destination=str(temp_path))
+                photos = [str(temp_path.absolute())]  # Используем абсолютный путь
+                logger.info(f"Скачана фотография из сообщения: {temp_path.absolute()}")
+            except Exception as e:
+                logger.error(f"Ошибка при скачивании фотографии: {e}", exc_info=True)
+        
+        # Проверяем существование файлов перед публикацией
+        if photos:
+            existing_photos = []
+            for photo_path in photos:
+                from pathlib import Path
+                photo_path_obj = Path(photo_path)
+                if photo_path_obj.exists():
+                    existing_photos.append(str(photo_path_obj.absolute()))
+                    logger.info(f"Фото существует: {photo_path_obj.absolute()}")
+                else:
+                    logger.warning(f"Фото не найдено: {photo_path}")
+            photos = existing_photos
+        
+        logger.info(f"Публикация поста с {len(photos)} фотографиями: {photos}")
+        
+        # Публикуем пост сразу
         results = await dependencies.post_service.publish_approved_post(post_text, photos)
         
-        await safe_answer_callback(callback, "Пост опубликован!", show_alert=True)
         await safe_edit_message(
             callback,
-            f"✅ <b>Пост опубликован!</b>\n\n"
+            f"🚀 <b>Пост опубликован сразу!</b>\n\n"
             f"Telegram: {results.get('telegram', 'N/A')}\n"
             f"VK: {results.get('vk', 'N/A')}"
         )
     
     except Exception as e:
         logger.error(f"Ошибка при публикации поста: {e}")
-        await safe_answer_callback(callback, "Ошибка при публикации", show_alert=True)
+        await safe_answer_callback(callback, f"Ошибка: {str(e)}", show_alert=True)
 
 
 @router.callback_query(F.data == "edit_post")
@@ -904,44 +1651,111 @@ async def request_edit(callback: CallbackQuery, state: FSMContext):
     await safe_answer_callback(callback)
     await state.set_state(PostApprovalStates.waiting_for_edits)
     
-    # Сохраняем ID сообщения с черновиком
-    await state.update_data(draft_message_id=callback.message.message_id)
+    # Получаем текст поста из сообщения
+    post_text = callback.message.text or callback.message.caption or ""
+    if post_text:
+        # Убираем заголовок "Черновик поста для согласования:" и другие префиксы
+        if "Черновик поста для согласования:" in post_text:
+            post_text = post_text.split("\n\n", 1)[1] if "\n\n" in post_text else post_text.replace("Черновик поста для согласования:", "").strip()
+        # Убираем HTML теги из заголовка
+        post_text = post_text.replace("<b>Черновик поста для согласования:</b>", "").replace("📝 Полный текст ниже ⬇️", "").strip()
+    
+    # Сохраняем исходный текст и ID сообщения с черновиком
+    await state.update_data(
+        draft_message_id=callback.message.message_id,
+        original_post_text=post_text,
+        original_photos=[]  # TODO: сохранить пути к фотографиям если есть
+    )
     
     await callback.message.answer(
-        "Пожалуйста, отправьте текст правок для этого поста:"
+        "Пожалуйста, отправьте текст правок для этого поста:\n\n"
+        "Например: 'сократи текст в 3 раза', 'добавь больше эмодзи', 'измени стиль на более дружелюбный'"
     )
 
 
 @router.message(PostApprovalStates.waiting_for_edits)
 async def process_edits(message: Message, state: FSMContext):
-    """Обрабатывает правки от администратора"""
-    if not dependencies.post_service:
-        await message.answer("Сервис недоступен")
-        await state.clear()
+    """Обрабатывает правки от администратора (для обычных черновиков и запланированных постов)"""
+    if not is_admin(message.from_user.id):
+        await message.answer("У вас нет доступа.")
+        await safe_clear_state(state)
         return
     
-    edits = message.text
+    if not message.text:
+        await message.answer("Пожалуйста, отправьте текстовое сообщение с правками.")
+        return
+    
+    if not dependencies.post_service:
+        await message.answer("Сервис недоступен")
+        await safe_clear_state(state)
+        return
+    
+    edits = message.text.strip()
+    
+    if not edits:
+        await message.answer("Пожалуйста, отправьте текст правок.")
+        return
     
     data = await state.get_data()
-    draft_message_id = data.get('draft_message_id')
+    day_of_week = data.get('scheduled_post_day')  # Проверяем, редактируется ли запланированный пост
+    original_post_text = data.get('original_post_text', '')
+    original_photos = data.get('original_photos', [])
+    
+    if not original_post_text:
+        await message.answer("Не удалось найти исходный текст поста. Попробуйте создать пост заново.")
+        await safe_clear_state(state)
+        return
     
     try:
-        # Получаем исходный текст поста
-        # TODO: Получить исходный текст из сохраненного черновика
+        await message.answer("⏳ Перерабатываю пост с учетом ваших правок...")
         
-        # Перерабатываем пост
-        # refined_post = await dependencies.post_service.refine_post(original_post, edits)
+        # Перерабатываем пост через AI
+        logger.info(f"Переработка поста. Исходный текст: {len(original_post_text)} символов. Правки: {edits}")
+        refined_post = await dependencies.post_service.refine_post(original_post_text, edits)
+        logger.info(f"Пост переработан. Новый текст: {len(refined_post)} символов")
         
-        await message.answer(
-            "Пост переработан. Функция редактирования будет доработана."
-        )
+        # Если это запланированный пост, обновляем его
+        if day_of_week and dependencies.scheduled_posts_service:
+            dependencies.scheduled_posts_service.add_scheduled_post(
+                day_of_week=day_of_week,
+                post_text=refined_post,
+                photos=original_photos,
+                admin_id=message.from_user.id
+            )
+            
+            day_names = {
+                'monday': 'Понедельник',
+                'tuesday': 'Вторник',
+                'wednesday': 'Среда',
+                'thursday': 'Четверг',
+                'friday': 'Пятница',
+                'saturday': 'Суббота'
+            }
+            day_name = day_names.get(day_of_week, day_of_week)
+            
+            await message.answer(
+                f"✅ <b>Запланированный пост обновлен!</b>\n\n"
+                f"📅 День: <b>{day_name}</b>\n\n"
+                f"Пост будет опубликован в запланированное время.",
+                reply_markup=get_main_menu_keyboard(),
+                parse_mode="HTML"
+            )
+        else:
+            # Обычный черновик - отправляем на согласование
+            await dependencies.post_service.send_for_approval(refined_post, original_photos)
+            
+            await message.answer(
+                "✅ <b>Пост переработан и отправлен на согласование!</b>\n\n"
+                f"Новая длина: {len(refined_post)} символов",
+                parse_mode="HTML"
+            )
         
-        await state.clear()
+        await safe_clear_state(state)
     
     except Exception as e:
         logger.error(f"Ошибка при обработке правок: {e}")
-        await message.answer("Ошибка при обработке правок.")
-        await state.clear()
+        await message.answer(f"❌ Ошибка при обработке правок: {str(e)}")
+        await safe_clear_state(state)
 
 
 @router.message(Command("status"))

@@ -122,64 +122,164 @@ class SchedulerService:
             id='sunday_reminders'
         )
         
+        # Ежедневный анализ источников (если включен)
+        if settings.SOURCE_ANALYSIS_ENABLED:
+            analysis_hour, analysis_min = self._parse_time(settings.SOURCE_ANALYSIS_TIME)
+            try:
+                self.scheduler.remove_job('source_analysis')
+            except:
+                pass
+            self.scheduler.add_job(
+                self._analyze_sources_and_generate_post,
+                CronTrigger(hour=analysis_hour, minute=analysis_min),
+                id='source_analysis'
+            )
+            logger.info(f"Задача анализа источников настроена на {settings.SOURCE_ANALYSIS_TIME}")
+        
         logger.info("Расписание публикаций настроено")
     
     async def _generate_and_send_monday_post(self):
-        """Генерирует и отправляет пост понедельника"""
+        """Публикует запланированный пост понедельника или генерирует новый"""
         try:
-            logger.info("Генерация поста понедельника...")
+            from services import dependencies
+            
+            # Проверяем, есть ли запланированный пост
+            if dependencies.scheduled_posts_service:
+                scheduled_post = dependencies.scheduled_posts_service.get_scheduled_post('monday')
+                if scheduled_post:
+                    logger.info("Найден запланированный пост для понедельника, публикуем его")
+                    results = await self.post_service.publish_approved_post(
+                        scheduled_post.post_text,
+                        scheduled_post.photos
+                    )
+                    # Удаляем пост из запланированных после публикации
+                    dependencies.scheduled_posts_service.remove_scheduled_post('monday')
+                    logger.info(f"Запланированный пост понедельника опубликован: {results}")
+                    return
+            
+            # Если запланированного поста нет, генерируем новый
+            logger.info("Генерация нового поста понедельника...")
             post_text, photos = await self.post_service.generate_monday_post()
-            await self.post_service.send_for_approval(post_text, photos)
+            await self.post_service.send_for_approval(post_text, photos, day_of_week='monday')
         except Exception as e:
-            logger.error(f"Ошибка при генерации поста понедельника: {e}")
+            logger.error(f"Ошибка при публикации поста понедельника: {e}")
     
     async def _generate_and_send_tuesday_post(self):
-        """Генерирует и отправляет пост вторника"""
+        """Публикует запланированный пост вторника или генерирует новый"""
         try:
-            logger.info("Генерация поста вторника...")
+            from services import dependencies
+            
+            if dependencies.scheduled_posts_service:
+                scheduled_post = dependencies.scheduled_posts_service.get_scheduled_post('tuesday')
+                if scheduled_post:
+                    logger.info("Найден запланированный пост для вторника, публикуем его")
+                    results = await self.post_service.publish_approved_post(
+                        scheduled_post.post_text,
+                        scheduled_post.photos
+                    )
+                    dependencies.scheduled_posts_service.remove_scheduled_post('tuesday')
+                    logger.info(f"Запланированный пост вторника опубликован: {results}")
+                    return
+            
+            logger.info("Генерация нового поста вторника...")
             post_text, photos = await self.post_service.generate_tuesday_post()
-            await self.post_service.send_for_approval(post_text, photos)
+            await self.post_service.send_for_approval(post_text, photos, day_of_week='tuesday')
         except Exception as e:
-            logger.error(f"Ошибка при генерации поста вторника: {e}")
+            logger.error(f"Ошибка при публикации поста вторника: {e}")
     
     async def _generate_and_send_wednesday_post(self):
-        """Генерирует и отправляет пост среды"""
+        """Публикует запланированный пост среды или генерирует новый"""
         try:
-            logger.info("Генерация поста среды...")
-            # Чередуем отчет и мемы
+            from services import dependencies
+            
+            if dependencies.scheduled_posts_service:
+                scheduled_post = dependencies.scheduled_posts_service.get_scheduled_post('wednesday')
+                if scheduled_post:
+                    logger.info("Найден запланированный пост для среды, публикуем его")
+                    results = await self.post_service.publish_approved_post(
+                        scheduled_post.post_text,
+                        scheduled_post.photos
+                    )
+                    dependencies.scheduled_posts_service.remove_scheduled_post('wednesday')
+                    logger.info(f"Запланированный пост среды опубликован: {results}")
+                    return
+            
+            logger.info("Генерация нового поста среды...")
             day_of_month = datetime.now().day
             content_type = "meme" if day_of_month % 2 == 0 else "report"
             post_text, photos = await self.post_service.generate_wednesday_post(content_type)
-            await self.post_service.send_for_approval(post_text, photos)
+            await self.post_service.send_for_approval(post_text, photos, day_of_week='wednesday')
         except Exception as e:
-            logger.error(f"Ошибка при генерации поста среды: {e}")
+            logger.error(f"Ошибка при публикации поста среды: {e}")
     
     async def _generate_and_send_thursday_post(self):
-        """Генерирует и отправляет пост четверга"""
+        """Публикует запланированный пост четверга или генерирует новый"""
         try:
-            logger.info("Генерация поста четверга...")
+            from services import dependencies
+            
+            if dependencies.scheduled_posts_service:
+                scheduled_post = dependencies.scheduled_posts_service.get_scheduled_post('thursday')
+                if scheduled_post:
+                    logger.info("Найден запланированный пост для четверга, публикуем его")
+                    results = await self.post_service.publish_approved_post(
+                        scheduled_post.post_text,
+                        scheduled_post.photos
+                    )
+                    dependencies.scheduled_posts_service.remove_scheduled_post('thursday')
+                    logger.info(f"Запланированный пост четверга опубликован: {results}")
+                    return
+            
+            logger.info("Генерация нового поста четверга...")
             post_text, photos = await self.post_service.generate_thursday_post()
-            await self.post_service.send_for_approval(post_text, photos)
+            await self.post_service.send_for_approval(post_text, photos, day_of_week='thursday')
         except Exception as e:
-            logger.error(f"Ошибка при генерации поста четверга: {e}")
+            logger.error(f"Ошибка при публикации поста четверга: {e}")
     
     async def _generate_and_send_friday_post(self):
-        """Генерирует и отправляет пост пятницы"""
+        """Публикует запланированный пост пятницы или генерирует новый"""
         try:
-            logger.info("Генерация поста пятницы...")
+            from services import dependencies
+            
+            if dependencies.scheduled_posts_service:
+                scheduled_post = dependencies.scheduled_posts_service.get_scheduled_post('friday')
+                if scheduled_post:
+                    logger.info("Найден запланированный пост для пятницы, публикуем его")
+                    results = await self.post_service.publish_approved_post(
+                        scheduled_post.post_text,
+                        scheduled_post.photos
+                    )
+                    dependencies.scheduled_posts_service.remove_scheduled_post('friday')
+                    logger.info(f"Запланированный пост пятницы опубликован: {results}")
+                    return
+            
+            logger.info("Генерация нового поста пятницы...")
             post_text, photos = await self.post_service.generate_friday_post()
-            await self.post_service.send_for_approval(post_text, photos)
+            await self.post_service.send_for_approval(post_text, photos, day_of_week='friday')
         except Exception as e:
-            logger.error(f"Ошибка при генерации поста пятницы: {e}")
+            logger.error(f"Ошибка при публикации поста пятницы: {e}")
     
     async def _generate_and_send_saturday_post(self):
-        """Генерирует и отправляет пост субботы"""
+        """Публикует запланированный пост субботы или генерирует новый"""
         try:
-            logger.info("Генерация поста субботы...")
+            from services import dependencies
+            
+            if dependencies.scheduled_posts_service:
+                scheduled_post = dependencies.scheduled_posts_service.get_scheduled_post('saturday')
+                if scheduled_post:
+                    logger.info("Найден запланированный пост для субботы, публикуем его")
+                    results = await self.post_service.publish_approved_post(
+                        scheduled_post.post_text,
+                        scheduled_post.photos
+                    )
+                    dependencies.scheduled_posts_service.remove_scheduled_post('saturday')
+                    logger.info(f"Запланированный пост субботы опубликован: {results}")
+                    return
+            
+            logger.info("Генерация нового поста субботы...")
             post_text, photos = await self.post_service.generate_saturday_post()
-            await self.post_service.send_for_approval(post_text, photos)
+            await self.post_service.send_for_approval(post_text, photos, day_of_week='saturday')
         except Exception as e:
-            logger.error(f"Ошибка при генерации поста субботы: {e}")
+            logger.error(f"Ошибка при публикации поста субботы: {e}")
     
     async def _send_sunday_reminders(self):
         """Отправляет напоминания сотрудникам о подготовке материалов"""
@@ -190,6 +290,56 @@ class SchedulerService:
             pass
         except Exception as e:
             logger.error(f"Ошибка при отправке напоминаний: {e}")
+    
+    async def _analyze_sources_and_generate_post(self):
+        """Анализирует источники и генерирует пост на основе анализа"""
+        try:
+            logger.info("Начало анализа источников и генерации поста...")
+            
+            # Импортируем зависимости здесь, чтобы избежать циклических импортов
+            from services import dependencies
+            
+            if not dependencies.source_service or not dependencies.source_parser_service:
+                logger.error("Сервисы источников не инициализированы")
+                return
+            
+            if not dependencies.ai_service:
+                logger.error("AI сервис не инициализирован")
+                return
+            
+            # Получаем все включенные источники
+            sources = dependencies.source_service.get_enabled_sources()
+            
+            if not sources:
+                logger.info("Нет включенных источников для анализа")
+                return
+            
+            # Парсим посты из всех источников
+            source_posts = await dependencies.source_parser_service.parse_all_sources(sources)
+            
+            if not source_posts:
+                logger.warning("Не удалось получить посты из источников")
+                return
+            
+            # Генерируем пост на основе анализа
+            generated_post = await dependencies.ai_service.generate_post_from_sources(source_posts)
+            
+            # Определяем день недели для планирования (завтрашний день)
+            from datetime import timedelta
+            tomorrow = datetime.now() + timedelta(days=1)
+            day_mapping = {
+                0: 'monday', 1: 'tuesday', 2: 'wednesday', 3: 'thursday',
+                4: 'friday', 5: 'saturday', 6: 'sunday'
+            }
+            tomorrow_day = day_mapping.get(tomorrow.weekday())
+            
+            # Отправляем на утверждение администратору с указанием дня недели
+            await self.post_service.send_for_approval(generated_post, photos=[], day_of_week=tomorrow_day)
+            
+            logger.info("Пост на основе анализа источников отправлен на утверждение")
+            
+        except Exception as e:
+            logger.error(f"Ошибка при анализе источников и генерации поста: {e}", exc_info=True)
     
     def start(self):
         """Запускает планировщик"""

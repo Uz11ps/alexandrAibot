@@ -247,6 +247,73 @@ class FileService:
         async with aiofiles.open(file_path, 'r', encoding='utf-8') as f:
             return await f.read()
     
+    async def get_archived_posts(self, days: int = 7) -> List[dict]:
+        """
+        Получает список архивированных постов за указанный период
+        
+        Args:
+            days: Количество дней для выборки
+            
+        Returns:
+            Список словарей с информацией о постах: {'date': str, 'filename': str, 'path': Path}
+        """
+        from datetime import datetime, timedelta
+        
+        posts = []
+        cutoff_date = datetime.now() - timedelta(days=days)
+        
+        try:
+            if not self.archive_folder.exists():
+                return posts
+            
+            for file_path in self.archive_folder.glob("post_*.txt"):
+                try:
+                    # Извлекаем дату из имени файла: post_2025-12-06_17-30-45.txt
+                    filename = file_path.stem  # post_2025-12-06_17-30-45
+                    date_str = filename.replace("post_", "").replace("-", ":", 2)  # 2025:12:06_17-30-45
+                    date_str = date_str.replace("_", ":", 1).replace("-", ":")  # 2025:12:06:17:30:45
+                    
+                    # Парсим дату
+                    post_date = datetime.strptime(date_str, "%Y:%m:%d:%H:%M:%S")
+                    
+                    if post_date >= cutoff_date:
+                        posts.append({
+                            'date': post_date,
+                            'date_str': post_date.strftime("%d.%m.%Y %H:%M"),
+                            'filename': file_path.name,
+                            'path': file_path
+                        })
+                except Exception as e:
+                    logger.warning(f"Не удалось обработать файл {file_path}: {e}")
+                    continue
+            
+            # Сортируем по дате (новые первыми)
+            posts.sort(key=lambda x: x['date'], reverse=True)
+            return posts
+        
+        except Exception as e:
+            logger.error(f"Ошибка при получении архивированных постов: {e}")
+            return posts
+    
+    async def get_post_content(self, filename: str) -> Optional[str]:
+        """
+        Получает содержимое конкретного поста по имени файла
+        
+        Args:
+            filename: Имя файла поста
+            
+        Returns:
+            Содержимое поста или None
+        """
+        try:
+            file_path = self.archive_folder / filename
+            if file_path.exists():
+                return await self.read_file_content(file_path)
+            return None
+        except Exception as e:
+            logger.error(f"Ошибка при чтении поста {filename}: {e}")
+            return None
+    
     def get_folder_path(self, folder_type: str) -> Path:
         """
         Возвращает путь к папке по типу

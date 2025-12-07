@@ -8,7 +8,7 @@ from aiogram.enums import ParseMode
 from config.settings import settings
 from services.telegram_service import TelegramService
 from services import dependencies
-from handlers import admin_handlers, employee_handlers
+from handlers import admin_handlers, employee_handlers, employee_admin_handlers, source_admin_handlers
 
 # Настройка логирования
 logging.basicConfig(
@@ -34,8 +34,11 @@ async def main():
     dependencies.init_services(bot, telegram_service)
     
     # Регистрация обработчиков
+    # Важно: FSM обработчики должны быть зарегистрированы ПЕРЕД общими обработчиками
+    dp.include_router(employee_admin_handlers.router)  # FSM обработчики для админа
+    dp.include_router(source_admin_handlers.router)  # FSM обработчики для источников
     dp.include_router(admin_handlers.router)
-    dp.include_router(employee_handlers.router)
+    dp.include_router(employee_handlers.router)  # Общие обработчики для сотрудников
     
     # Запуск планировщика
     if dependencies.scheduler_service:
@@ -56,6 +59,8 @@ async def main():
     finally:
         if dependencies.scheduler_service:
             dependencies.scheduler_service.stop()
+        if dependencies.source_parser_service:
+            await dependencies.source_parser_service.close()
         await bot.session.close()
 
 

@@ -13,7 +13,8 @@ class Settings(BaseSettings):
     
     # VK
     VK_GROUP_ID: int
-    VK_ACCESS_TOKEN: str
+    VK_ACCESS_TOKEN: str  # Токен группы (для публикации постов)
+    VK_USER_TOKEN: Optional[str] = None  # Пользовательский токен (для загрузки фото, если токен группы не поддерживает)
     
     # OpenAI
     OPENAI_API_KEY: str
@@ -54,6 +55,12 @@ class Settings(BaseSettings):
     GOOGLE_DRIVE_MEMES_FOLDER_ID: Optional[str] = None
     GOOGLE_DRIVE_SERVICES_FOLDER_ID: Optional[str] = None
     GOOGLE_DRIVE_ARCHIVE_FOLDER_ID: Optional[str] = None
+    
+    # Анализ источников
+    SOURCE_ANALYSIS_ENABLED: bool = True
+    SOURCE_ANALYSIS_TIME: str = "12:00"  # Время ежедневного анализа источников
+    TELEGRAM_API_ID: Optional[int] = None  # API ID для Telethon (получить на my.telegram.org)
+    TELEGRAM_API_HASH: Optional[str] = None  # API Hash для Telethon
     
     class Config:
         env_file = ".env"
