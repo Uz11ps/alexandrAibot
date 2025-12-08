@@ -138,6 +138,87 @@ class SchedulerService:
         
         logger.info("Расписание публикаций настроено")
     
+    async def _check_photos_and_notify(self, day_name: str) -> bool:
+        """
+        Проверяет наличие фотографий для поста и отправляет уведомления если их нет
+        
+        Args:
+            day_name: Название дня недели (например, "понедельник")
+            
+        Returns:
+            True если фото есть, False если нет
+        """
+        try:
+            from services import dependencies
+            
+            # Проверяем наличие неиспользованных фотографий
+            photos = await dependencies.file_service.get_unused_photos(limit=1)
+            
+            if not photos or len(photos) == 0:
+                logger.warning(f"Нет доступных фотографий для поста на {day_name}")
+                
+                # Получаем список администраторов
+                admin_ids = self._get_admin_ids()
+                
+                # Формируем сообщение
+                message_text = (
+                    f"⚠️ <b>Внимание!</b>\n\n"
+                    f"Нет доступных фотографий для создания поста на <b>{day_name}</b>.\n\n"
+                    f"Пожалуйста, загрузите фотографии через меню бота."
+                )
+                
+                # Отправляем уведомления всем администраторам
+                for admin_id in admin_ids:
+                    try:
+                        await dependencies.telegram_service.bot.send_message(
+                            chat_id=admin_id,
+                            text=message_text,
+                            parse_mode="HTML"
+                        )
+                        logger.info(f"Уведомление отправлено администратору {admin_id}")
+                    except Exception as e:
+                        logger.error(f"Ошибка при отправке уведомления администратору {admin_id}: {e}")
+                
+                # Отправляем уведомление ответственному за контент сотруднику
+                if dependencies.employee_service:
+                    content_manager_id = dependencies.employee_service.get_content_manager_id()
+                    if content_manager_id:
+                        try:
+                            await dependencies.telegram_service.bot.send_message(
+                                chat_id=content_manager_id,
+                                text=message_text,
+                                parse_mode="HTML"
+                            )
+                            logger.info(f"Уведомление отправлено ответственному за контент {content_manager_id}")
+                        except Exception as e:
+                            logger.error(f"Ошибка при отправке уведомления ответственному за контент: {e}")
+                
+                return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Ошибка при проверке фотографий: {e}")
+            return True  # В случае ошибки продолжаем генерацию
+    
+    def _get_admin_ids(self) -> list[int]:
+        """Возвращает список ID всех администраторов"""
+        admin_ids = []
+        
+        # Основной администратор
+        if settings.TELEGRAM_ADMIN_ID:
+            admin_ids.append(settings.TELEGRAM_ADMIN_ID)
+        
+        # Дополнительные администраторы
+        if settings.TELEGRAM_ADMIN_IDS:
+            try:
+                additional_ids = [int(id.strip()) for id in settings.TELEGRAM_ADMIN_IDS.split(',') if id.strip()]
+                admin_ids.extend(additional_ids)
+            except Exception as e:
+                logger.error(f"Ошибка при парсинге дополнительных администраторов: {e}")
+        
+        return admin_ids
+    
     async def _generate_and_send_monday_post(self):
         """Публикует запланированный пост понедельника или генерирует новый"""
         try:
@@ -156,6 +237,11 @@ class SchedulerService:
                     dependencies.scheduled_posts_service.remove_scheduled_post('monday')
                     logger.info(f"Запланированный пост понедельника опубликован: {results}")
                     return
+            
+            # Проверяем наличие фотографий перед генерацией
+            if not await self._check_photos_and_notify("понедельник"):
+                logger.info("Генерация поста понедельника пропущена из-за отсутствия фотографий")
+                return
             
             # Если запланированного поста нет, генерируем новый
             logger.info("Генерация нового поста понедельника...")
@@ -181,6 +267,11 @@ class SchedulerService:
                     logger.info(f"Запланированный пост вторника опубликован: {results}")
                     return
             
+            # Проверяем наличие фотографий перед генерацией
+            if not await self._check_photos_and_notify("вторник"):
+                logger.info("Генерация поста вторника пропущена из-за отсутствия фотографий")
+                return
+            
             logger.info("Генерация нового поста вторника...")
             post_text, photos = await self.post_service.generate_tuesday_post()
             await self.post_service.send_for_approval(post_text, photos, day_of_week='tuesday')
@@ -203,6 +294,11 @@ class SchedulerService:
                     dependencies.scheduled_posts_service.remove_scheduled_post('wednesday')
                     logger.info(f"Запланированный пост среды опубликован: {results}")
                     return
+            
+            # Проверяем наличие фотографий перед генерацией
+            if not await self._check_photos_and_notify("среду"):
+                logger.info("Генерация поста среды пропущена из-за отсутствия фотографий")
+                return
             
             logger.info("Генерация нового поста среды...")
             day_of_month = datetime.now().day
@@ -229,6 +325,11 @@ class SchedulerService:
                     logger.info(f"Запланированный пост четверга опубликован: {results}")
                     return
             
+            # Проверяем наличие фотографий перед генерацией
+            if not await self._check_photos_and_notify("четверг"):
+                logger.info("Генерация поста четверга пропущена из-за отсутствия фотографий")
+                return
+            
             logger.info("Генерация нового поста четверга...")
             post_text, photos = await self.post_service.generate_thursday_post()
             await self.post_service.send_for_approval(post_text, photos, day_of_week='thursday')
@@ -252,6 +353,11 @@ class SchedulerService:
                     logger.info(f"Запланированный пост пятницы опубликован: {results}")
                     return
             
+            # Проверяем наличие фотографий перед генерацией
+            if not await self._check_photos_and_notify("пятницу"):
+                logger.info("Генерация поста пятницы пропущена из-за отсутствия фотографий")
+                return
+            
             logger.info("Генерация нового поста пятницы...")
             post_text, photos = await self.post_service.generate_friday_post()
             await self.post_service.send_for_approval(post_text, photos, day_of_week='friday')
@@ -274,6 +380,11 @@ class SchedulerService:
                     dependencies.scheduled_posts_service.remove_scheduled_post('saturday')
                     logger.info(f"Запланированный пост субботы опубликован: {results}")
                     return
+            
+            # Проверяем наличие фотографий перед генерацией
+            if not await self._check_photos_and_notify("субботу"):
+                logger.info("Генерация поста субботы пропущена из-за отсутствия фотографий")
+                return
             
             logger.info("Генерация нового поста субботы...")
             post_text, photos = await self.post_service.generate_saturday_post()

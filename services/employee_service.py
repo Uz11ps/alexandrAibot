@@ -55,14 +55,17 @@ class EmployeeService:
         self.employees_file = self.storage_path / "employees.json"
         self.requests_file = self.storage_path / "requests.json"
         self.history_file = self.storage_path / "history.json"
+        self.content_manager_file = self.storage_path / "content_manager.json"
         
         self.employees: Dict[int, Employee] = {}
         self.active_requests: Dict[int, EmployeeRequest] = {}
-        self.request_history: List[EmployeeRequest] = []
+        self.request_history: List[EmployeeRequest] = {}
+        self.content_manager_id: Optional[int] = None
         
         self._load_employees()
         self._load_requests()
         self._load_history()
+        self._load_content_manager()
     
     def _load_employees(self):
         """Загружает список сотрудников из файла"""
@@ -464,4 +467,72 @@ class EmployeeService:
             grouped[emp_id]['requests'].append(conv['request'])
         
         return list(grouped.values())
+    
+    def _load_content_manager(self):
+        """Загружает ID ответственного за контент"""
+        try:
+            if self.content_manager_file.exists():
+                with open(self.content_manager_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    self.content_manager_id = data.get('content_manager_id')
+                    if self.content_manager_id:
+                        logger.info(f"Загружен ответственный за контент: {self.content_manager_id}")
+        except Exception as e:
+            logger.error(f"Ошибка при загрузке ответственного за контент: {e}")
+            self.content_manager_id = None
+    
+    def _save_content_manager(self):
+        """Сохраняет ID ответственного за контент"""
+        try:
+            data = {'content_manager_id': self.content_manager_id}
+            with open(self.content_manager_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            logger.info(f"Сохранен ответственный за контент: {self.content_manager_id}")
+        except Exception as e:
+            logger.error(f"Ошибка при сохранении ответственного за контент: {e}")
+    
+    def set_content_manager(self, employee_id: int) -> bool:
+        """
+        Назначает сотрудника ответственным за контент
+        
+        Args:
+            employee_id: Telegram ID сотрудника
+            
+        Returns:
+            True если успешно, False если сотрудник не найден
+        """
+        if employee_id not in self.employees:
+            logger.warning(f"Сотрудник {employee_id} не найден")
+            return False
+        
+        self.content_manager_id = employee_id
+        self._save_content_manager()
+        logger.info(f"Назначен ответственный за контент: {employee_id}")
+        return True
+    
+    def remove_content_manager(self):
+        """Удаляет назначение ответственного за контент"""
+        self.content_manager_id = None
+        self._save_content_manager()
+        logger.info("Ответственный за контент удален")
+    
+    def get_content_manager_id(self) -> Optional[int]:
+        """
+        Возвращает ID ответственного за контент
+        
+        Returns:
+            Telegram ID ответственного за контент или None
+        """
+        return self.content_manager_id
+    
+    def get_content_manager(self) -> Optional[Employee]:
+        """
+        Возвращает информацию об ответственном за контент
+        
+        Returns:
+            Employee объект или None
+        """
+        if self.content_manager_id and self.content_manager_id in self.employees:
+            return self.employees[self.content_manager_id]
+        return None
 

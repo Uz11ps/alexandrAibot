@@ -21,6 +21,7 @@ class EmployeeManagementStates(StatesGroup):
     waiting_for_request_type = State()
     waiting_for_reminder_interval = State()
     waiting_for_response_timeout = State()
+    waiting_for_content_manager_selection = State()
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -667,4 +668,149 @@ async def employee_process_response_timeout(message: Message, state: FSMContext)
         await message.answer("❌ Неверный формат. Отправьте число от 1 до 168:")
     
     await safe_clear_state(state)
+
+
+@router.callback_query(F.data == "employee_content_manager")
+async def employee_content_manager_menu(callback: CallbackQuery):
+    """Меню управления ответственным за контент"""
+    if not is_admin(callback.from_user.id):
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
+        return
+    
+    if not dependencies.employee_service:
+        await safe_answer_callback(callback, "Сервис недоступен", show_alert=True)
+        return
+    
+    content_manager = dependencies.employee_service.get_content_manager()
+    
+    if content_manager:
+        manager_text = (
+            f"👤 <b>Ответственный за контент</b>\n\n"
+            f"<b>Текущий ответственный:</b>\n"
+            f"• Имя: <b>{content_manager.name}</b>\n"
+            f"• Роль: {content_manager.role}\n"
+            f"• ID: {content_manager.telegram_id}\n\n"
+            f"Ответственный за контент получает уведомления об отсутствии фотографий для постов."
+        )
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✏️ Изменить", callback_data="employee_content_manager_set")],
+            [InlineKeyboardButton(text="🗑️ Удалить", callback_data="employee_content_manager_remove")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="menu_employees")]
+        ])
+    else:
+        manager_text = (
+            f"👤 <b>Ответственный за контент</b>\n\n"
+            f"Ответственный за контент не назначен.\n\n"
+            f"Ответственный за контент получает уведомления об отсутствии фотографий для постов."
+        )
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="➕ Назначить", callback_data="employee_content_manager_set")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="menu_employees")]
+        ])
+    
+    await safe_edit_message(callback, manager_text, reply_markup=keyboard)
+    await safe_answer_callback(callback)
+
+
+@router.callback_query(F.data == "employee_content_manager_set")
+async def employee_content_manager_set_start(callback: CallbackQuery, state: FSMContext):
+    """Начинает процесс назначения ответственного за контент"""
+    if not is_admin(callback.from_user.id):
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
+        return
+    
+    if not dependencies.employee_service:
+        await safe_answer_callback(callback, "Сервис недоступен", show_alert=True)
+        return
+    
+    employees = dependencies.employee_service.get_all_employees()
+    
+    if not employees:
+        await safe_answer_callback(callback, "Нет сотрудников для назначения", show_alert=True)
+        return
+    
+    buttons = []
+    for emp in employees:
+        button_text = f"{emp.name} ({emp.role})"
+        if len(button_text) > 30:
+            button_text = button_text[:27] + "..."
+        buttons.append([
+            InlineKeyboardButton(
+                text=button_text,
+                callback_data=f"employee_content_manager_select_{emp.telegram_id}"
+            )
+        ])
+    
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="employee_content_manager")])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    
+    await safe_edit_message(
+        callback,
+        "👤 <b>Назначение ответственного за контент</b>\n\n"
+        "Выберите сотрудника:",
+        reply_markup=keyboard
+    )
+    await safe_answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("employee_content_manager_select_"))
+async def employee_content_manager_set_confirm(callback: CallbackQuery):
+    """Подтверждает назначение ответственного за контент"""
+    if not is_admin(callback.from_user.id):
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
+        return
+    
+    if not dependencies.employee_service:
+        await safe_answer_callback(callback, "Сервис недоступен", show_alert=True)
+        return
+    
+    employee_id = int(callback.data.replace("employee_content_manager_select_", ""))
+    employee = dependencies.employee_service.get_employee(employee_id)
+    
+    if not employee:
+        await safe_answer_callback(callback, "Сотрудник не найден", show_alert=True)
+        return
+    
+    success = dependencies.employee_service.set_content_manager(employee_id)
+    
+    if success:
+        await safe_edit_message(
+            callback,
+            f"✅ <b>Ответственный за контент назначен!</b>\n\n"
+            f"<b>Сотрудник:</b> {employee.name}\n"
+            f"<b>Роль:</b> {employee.role}\n"
+            f"<b>ID:</b> {employee.telegram_id}\n\n"
+            f"Теперь этот сотрудник будет получать уведомления об отсутствии фотографий для постов.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data="employee_content_manager")]
+            ])
+        )
+    else:
+        await safe_answer_callback(callback, "Ошибка при назначении", show_alert=True)
+    
+    await safe_answer_callback(callback)
+
+
+@router.callback_query(F.data == "employee_content_manager_remove")
+async def employee_content_manager_remove(callback: CallbackQuery):
+    """Удаляет назначение ответственного за контент"""
+    if not is_admin(callback.from_user.id):
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
+        return
+    
+    if not dependencies.employee_service:
+        await safe_answer_callback(callback, "Сервис недоступен", show_alert=True)
+        return
+    
+    dependencies.employee_service.remove_content_manager()
+    
+    await safe_edit_message(
+        callback,
+        "✅ <b>Ответственный за контент удален</b>\n\n"
+        "Уведомления об отсутствии фотографий будут отправляться только администраторам.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="employee_content_manager")]
+        ])
+    )
+    await safe_answer_callback(callback)
 

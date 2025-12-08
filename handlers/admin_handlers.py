@@ -648,11 +648,18 @@ async def menu_employees(callback: CallbackQuery):
     reminder_interval = settings_service.get_reminder_interval()
     response_timeout = settings_service.get_response_timeout()
     
+    # Получаем информацию об ответственном за контент
+    content_manager = dependencies.employee_service.get_content_manager()
+    content_manager_text = "Не назначен"
+    if content_manager:
+        content_manager_text = f"{content_manager.name} ({content_manager.role})"
+    
     employees_text = (
         "👥 <b>Управление сотрудниками</b>\n\n"
         f"📊 <b>Статистика:</b>\n"
         f"• Всего сотрудников: {len(employees)}\n"
-        f"• Активных запросов: {len(pending_requests)}\n\n"
+        f"• Активных запросов: {len(pending_requests)}\n"
+        f"• Ответственный за контент: <b>{content_manager_text}</b>\n\n"
         f"⚙️ <b>Настройки таймаутов:</b>\n"
         f"• Интервал напоминаний: <b>{reminder_interval} часов</b>\n"
         f"• Таймаут эскалации: <b>{response_timeout} часов</b>\n\n"
@@ -676,6 +683,9 @@ async def menu_employees(callback: CallbackQuery):
         ],
         [
             InlineKeyboardButton(text="⚙️ Настройки таймаутов", callback_data="employee_settings")
+        ],
+        [
+            InlineKeyboardButton(text="👤 Ответственный за контент", callback_data="employee_content_manager")
         ],
         [
             InlineKeyboardButton(text="◀️ Назад", callback_data="menu_back")
