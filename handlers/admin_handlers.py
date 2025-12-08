@@ -40,6 +40,9 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="✏️ Редактировать промпты", callback_data="menu_prompts")
         ],
         [
+            InlineKeyboardButton(text="🚀 Опубликовать сейчас", callback_data="post_now")
+        ],
+        [
             InlineKeyboardButton(text="🔄 Обновить меню", callback_data="menu_refresh")
         ]
     ])
@@ -150,6 +153,21 @@ class PromptEditStates(StatesGroup):
     """Состояния для редактирования промптов"""
     waiting_for_prompt_selection = State()
     waiting_for_prompt_text = State()
+
+
+class SchedulePostStates(StatesGroup):
+    """Состояния для управления постами в расписании"""
+    waiting_for_day = State()
+    waiting_for_time = State()
+    waiting_for_post_name = State()
+    waiting_for_post_description = State()
+    waiting_for_post_index = State()
+
+
+class PostNowStates(StatesGroup):
+    """Состояния для функции 'Опубликовать сейчас'"""
+    waiting_for_post_type = State()
+    waiting_for_photo = State()
 
 
 def is_admin(user_id: int) -> bool:
@@ -475,30 +493,48 @@ def get_schedule_keyboard() -> InlineKeyboardMarkup:
 
 @router.callback_query(F.data == "menu_schedule")
 async def menu_schedule(callback: CallbackQuery):
-    """Меню расписания"""
+    """Меню расписания публикаций"""
     if not is_admin(callback.from_user.id):
-        await callback.answer("У вас нет доступа.", show_alert=True)
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
         return
     
-    schedule_config = ScheduleConfigService()
+    post_types_config = PostTypesConfigService()
+    
+    day_names = {
+        'monday': 'Понедельник',
+        'tuesday': 'Вторник',
+        'wednesday': 'Среда',
+        'thursday': 'Четверг',
+        'friday': 'Пятница',
+        'saturday': 'Суббота'
+    }
+    
+    schedule_lines = []
+    for day_key, day_name in day_names.items():
+        posts = post_types_config.get_post_types(day_key)
+        if posts:
+            post_list = []
+            for i, post in enumerate(posts):
+                status = "✅" if post.get('enabled', True) else "❌"
+                post_list.append(f"  {status} {post.get('time', '09:00')} - {post.get('name', 'Без названия')}")
+            schedule_lines.append(f"<b>{day_name}:</b>\n" + "\n".join(post_list))
+        else:
+            schedule_lines.append(f"<b>{day_name}:</b> Нет постов")
     
     schedule_text = (
         "📅 <b>Расписание публикаций</b>\n\n"
-        f"Понедельник: {schedule_config.get_schedule_time('monday')} - Отчет по объектам\n"
-        f"Вторник: {schedule_config.get_schedule_time('tuesday')} - Экспертная статья\n"
-        f"Среда: {schedule_config.get_schedule_time('wednesday')} - Отчет или мемы\n"
-        f"Четверг: {schedule_config.get_schedule_time('thursday')} - Ответы на вопросы\n"
-        f"Пятница: {schedule_config.get_schedule_time('friday')} - Обзор проектов\n"
-        f"Суббота: {schedule_config.get_schedule_time('saturday')} - Услуги компании\n"
-        f"Воскресенье: {schedule_config.get_schedule_time('sunday')} - Напоминания сотрудникам\n\n"
-        "Выберите день для изменения времени:"
+        + "\n\n".join(schedule_lines) +
+        "\n\nВыберите действие:"
     )
     
-    await safe_edit_message(
-        callback,
-        schedule_text,
-        reply_markup=get_schedule_keyboard()
-    )
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Добавить пост", callback_data="schedule_add_post")],
+        [InlineKeyboardButton(text="✏️ Редактировать пост", callback_data="schedule_edit_post_list")],
+        [InlineKeyboardButton(text="🗑️ Удалить пост", callback_data="schedule_delete_post_list")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="menu_back")]
+    ])
+    
+    await safe_edit_message(callback, schedule_text, reply_markup=keyboard)
     await safe_answer_callback(callback)
 
 
@@ -2132,6 +2168,579 @@ async def process_prompt_text(message: Message, state: FSMContext):
             f"❌ Ошибка при сохранении промпта: {str(e)}\n\n"
             f"Попробуйте снова или отправьте 'отмена'."
         )
+
+
+# ========== Обработчики управления расписанием ==========
+
+@router.callback_query(F.data == "schedule_add_post")
+async def schedule_add_post_start(callback: CallbackQuery, state: FSMContext):
+    """Начинает процесс добавления поста в расписание"""
+    if not is_admin(callback.from_user.id):
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
+        return
+    
+    day_names = {
+        'monday': 'Понедельник',
+        'tuesday': 'Вторник',
+        'wednesday': 'Среда',
+        'thursday': 'Четверг',
+        'friday': 'Пятница',
+        'saturday': 'Суббота'
+    }
+    
+    buttons = [[InlineKeyboardButton(text=name, callback_data=f"schedule_add_day_{key}")] for key, name in day_names.items()]
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu_schedule")])
+    
+    await safe_edit_message(
+        callback,
+        "➕ <b>Добавление поста в расписание</b>\n\nВыберите день недели:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+    )
+    await safe_answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("schedule_add_day_"))
+async def schedule_add_post_day(callback: CallbackQuery, state: FSMContext):
+    """Обрабатывает выбор дня для добавления поста"""
+    if not is_admin(callback.from_user.id):
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
+        return
+    
+    day = callback.data.replace("schedule_add_day_", "")
+    await state.update_data(day=day)
+    await state.set_state(SchedulePostStates.waiting_for_time)
+    
+    day_names = {
+        'monday': 'Понедельник',
+        'tuesday': 'Вторник',
+        'wednesday': 'Среда',
+        'thursday': 'Четверг',
+        'friday': 'Пятница',
+        'saturday': 'Суббота'
+    }
+    
+    await safe_edit_message(
+        callback,
+        f"➕ <b>Добавление поста</b>\n\n"
+        f"День: <b>{day_names.get(day, day)}</b>\n\n"
+        f"Введите время публикации в формате <b>HH:MM</b>\n"
+        f"Например: 09:00, 14:30, 18:15\n\n"
+        f"Или отправьте 'отмена' для отмены:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_schedule")]
+        ])
+    )
+    await safe_answer_callback(callback)
+
+
+@router.message(SchedulePostStates.waiting_for_time)
+async def schedule_add_post_time(message: Message, state: FSMContext):
+    """Обрабатывает ввод времени для нового поста или редактирования"""
+    if not is_admin(message.from_user.id):
+        await message.answer("У вас нет доступа.")
+        await safe_clear_state(state)
+        return
+    
+    if not message.text:
+        await message.answer("Пожалуйста, отправьте текстовое сообщение с временем.")
+        return
+    
+    time_str = message.text.strip()
+    
+    if time_str.lower() in ['отмена', 'cancel', 'назад']:
+        await safe_clear_state(state)
+        await message.answer("❌ Операция отменена.", reply_markup=get_main_menu_keyboard())
+        return
+    
+    if time_str.lower() == 'пропустить':
+        # Пропускаем изменение времени, переходим к названию
+        data = await state.get_data()
+        post_index = data.get('post_index')
+        if post_index is not None:
+            # Редактирование - пропускаем время
+            await state.set_state(SchedulePostStates.waiting_for_post_name)
+            await message.answer(
+                "⏭️ Время не изменено.\n\n"
+                "Введите новое название поста (или отправьте 'пропустить'):\n\n"
+                "Или отправьте 'отмена' для отмены:"
+            )
+            return
+    
+    import re
+    if not re.match(r'^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$', time_str):
+        await message.answer(
+            "❌ Неверный формат времени!\n\n"
+            "Используйте формат <b>HH:MM</b>\n"
+            "Например: 09:00, 14:30, 18:15\n\n"
+            "Или отправьте 'пропустить' чтобы не менять время (при редактировании)\n\n"
+            "Попробуйте снова или отправьте 'отмена':",
+            parse_mode="HTML"
+        )
+        return
+    
+    await state.update_data(time=time_str)
+    await state.set_state(SchedulePostStates.waiting_for_post_name)
+    
+    data = await state.get_data()
+    post_index = data.get('post_index')
+    
+    if post_index is not None:
+        # Редактирование
+        await message.answer(
+            f"✅ Время обновлено: <b>{time_str}</b>\n\n"
+            f"Введите новое название поста (или отправьте 'пропустить'):\n\n"
+            f"Или отправьте 'отмена' для отмены:",
+            parse_mode="HTML"
+        )
+    else:
+        # Добавление нового поста
+        await message.answer(
+            f"✅ Время установлено: <b>{time_str}</b>\n\n"
+            f"Теперь введите название поста:\n\n"
+            f"Или отправьте 'отмена' для отмены:",
+            parse_mode="HTML"
+        )
+
+
+@router.message(SchedulePostStates.waiting_for_post_name)
+async def schedule_add_post_name(message: Message, state: FSMContext):
+    """Обрабатывает ввод названия поста"""
+    if not is_admin(message.from_user.id):
+        await message.answer("У вас нет доступа.")
+        await safe_clear_state(state)
+        return
+    
+    if not message.text:
+        await message.answer("Пожалуйста, отправьте текстовое сообщение с названием.")
+        return
+    
+    if message.text.lower().strip() in ['отмена', 'cancel', 'назад']:
+        await safe_clear_state(state)
+        await message.answer("❌ Операция отменена.", reply_markup=get_main_menu_keyboard())
+        return
+    
+    if message.text.lower().strip() == 'пропустить':
+        # Пропускаем изменение названия, переходим к описанию
+        data = await state.get_data()
+        post_index = data.get('post_index')
+        if post_index is not None:
+            # Редактирование - пропускаем название
+            await state.set_state(SchedulePostStates.waiting_for_post_description)
+            await message.answer(
+                "⏭️ Название не изменено.\n\n"
+                "Введите новое описание поста (или отправьте 'пропустить'):\n\n"
+                "Или отправьте 'отмена' для отмены:"
+            )
+            return
+    
+    await state.update_data(name=message.text.strip())
+    await state.set_state(SchedulePostStates.waiting_for_post_description)
+    
+    await message.answer(
+        f"✅ Название установлено: <b>{message.text.strip()}</b>\n\n"
+        f"Теперь введите описание поста (или отправьте 'пропустить'):\n\n"
+        f"Или отправьте 'отмена' для отмены:",
+        parse_mode="HTML"
+    )
+
+
+@router.message(SchedulePostStates.waiting_for_post_description)
+async def schedule_add_post_description(message: Message, state: FSMContext):
+    """Обрабатывает ввод описания поста и сохраняет его"""
+    if not is_admin(message.from_user.id):
+        await message.answer("У вас нет доступа.")
+        await safe_clear_state(state)
+        return
+    
+    if not message.text:
+        await message.answer("Пожалуйста, отправьте текстовое сообщение.")
+        return
+    
+    description = message.text.strip()
+    if description.lower() in ['отмена', 'cancel', 'назад']:
+        await safe_clear_state(state)
+        await message.answer("❌ Добавление поста отменено.", reply_markup=get_main_menu_keyboard())
+        return
+    
+    if description.lower() == 'пропустить':
+        description = ""
+    
+    data = await state.get_data()
+    day = data.get('day')
+    time = data.get('time')
+    name = data.get('name')
+    post_index = data.get('post_index')
+    
+    post_types_config = PostTypesConfigService()
+    
+    if post_index is not None:
+        # Редактирование существующего поста
+        posts = post_types_config.get_post_types(day)
+        if post_index >= len(posts):
+            await message.answer("❌ Ошибка: пост не найден.")
+            await safe_clear_state(state)
+            return
+        
+        old_post = posts[post_index]
+        # Обновляем только указанные поля
+        update_time = time if time else old_post.get('time', '09:00')
+        update_name = name if name else old_post.get('name', 'Без названия')
+        update_description = description if description != "" else old_post.get('description', '')
+        
+        success = post_types_config.update_post(
+            day, post_index,
+            time=update_time,
+            name=update_name,
+            description=update_description
+        )
+        
+        if success:
+            if dependencies.scheduler_service:
+                dependencies.scheduler_service.setup_schedule()
+            
+            await message.answer(
+                f"✅ <b>Пост обновлен!</b>\n\n"
+                f"День: <b>{day}</b>\n"
+                f"Время: <b>{update_time}</b>\n"
+                f"Название: <b>{update_name}</b>\n\n"
+                f"Планировщик обновлен.",
+                reply_markup=get_main_menu_keyboard(),
+                parse_mode="HTML"
+            )
+        else:
+            await message.answer("❌ Ошибка при обновлении поста.")
+    else:
+        # Добавление нового поста
+        if not all([day, time, name]):
+            await message.answer("❌ Ошибка: не все данные заполнены. Попробуйте снова.")
+            await safe_clear_state(state)
+            return
+        
+        success = post_types_config.add_post(day, time, name, description, enabled=True)
+        
+        if success:
+            if dependencies.scheduler_service:
+                dependencies.scheduler_service.setup_schedule()
+            
+            await message.answer(
+                f"✅ <b>Пост добавлен в расписание!</b>\n\n"
+                f"День: <b>{day}</b>\n"
+                f"Время: <b>{time}</b>\n"
+                f"Название: <b>{name}</b>\n\n"
+                f"Планировщик обновлен.",
+                reply_markup=get_main_menu_keyboard(),
+                parse_mode="HTML"
+            )
+        else:
+            await message.answer("❌ Ошибка при добавлении поста.")
+    
+    await safe_clear_state(state)
+
+
+# ========== Обработчики функции "Опубликовать сейчас" ==========
+
+@router.callback_query(F.data == "post_now")
+async def post_now_start(callback: CallbackQuery, state: FSMContext):
+    """Начинает процесс публикации поста сейчас"""
+    if not is_admin(callback.from_user.id):
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
+        return
+    
+    post_types_config = PostTypesConfigService()
+    all_types = post_types_config.get_all_post_types()
+    
+    # Собираем уникальные типы постов из всех дней
+    post_types = set()
+    for day_posts in all_types.values():
+        if isinstance(day_posts, list):
+            for post in day_posts:
+                post_types.add(post.get('name', ''))
+        elif isinstance(day_posts, dict):
+            post_types.add(day_posts.get('name', ''))
+    
+    if not post_types:
+        await safe_answer_callback(callback, "Нет доступных типов постов", show_alert=True)
+        return
+    
+    buttons = []
+    for post_type in sorted(post_types):
+        if post_type:
+            button_text = post_type[:30] if len(post_type) <= 30 else post_type[:27] + "..."
+            buttons.append([InlineKeyboardButton(text=f"📝 {button_text}", callback_data=f"post_now_type_{post_type}")])
+    
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu_back")])
+    
+    await safe_edit_message(
+        callback,
+        "🚀 <b>Опубликовать сейчас</b>\n\n"
+        "Выберите тип поста:\n\n"
+        "<b>⚠️ Внимание:</b> После выбора типа необходимо будет обязательно прикрепить фотографию.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+    )
+    await safe_answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("post_now_type_"))
+async def post_now_select_type(callback: CallbackQuery, state: FSMContext):
+    """Обрабатывает выбор типа поста для публикации"""
+    if not is_admin(callback.from_user.id):
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
+        return
+    
+    post_type = callback.data.replace("post_now_type_", "")
+    await state.update_data(post_type=post_type)
+    await state.set_state(PostNowStates.waiting_for_photo)
+    
+    await safe_edit_message(
+        callback,
+        f"🚀 <b>Опубликовать сейчас</b>\n\n"
+        f"Тип поста: <b>{post_type}</b>\n\n"
+        f"<b>⚠️ Обязательно прикрепите фотографию!</b>\n\n"
+        f"Отправьте фото или отправьте 'отмена' для отмены:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_back")]
+        ])
+    )
+    await safe_answer_callback(callback)
+
+
+@router.message(PostNowStates.waiting_for_photo)
+async def post_now_process_photo(message: Message, state: FSMContext):
+    """Обрабатывает фото и публикует пост"""
+    if not is_admin(message.from_user.id):
+        await message.answer("У вас нет доступа.")
+        await safe_clear_state(state)
+        return
+    
+    # Проверка на отмену
+    if message.text and message.text.lower().strip() in ['отмена', 'cancel', 'назад']:
+        await safe_clear_state(state)
+        await message.answer("❌ Публикация отменена.", reply_markup=get_main_menu_keyboard())
+        return
+    
+    # Проверяем наличие фото
+    if not message.photo:
+        await message.answer(
+            "❌ <b>Фотография обязательна!</b>\n\n"
+            "Пожалуйста, прикрепите фотографию к сообщению.\n\n"
+            "Или отправьте 'отмена' для отмены:",
+            parse_mode="HTML"
+        )
+        return
+    
+    try:
+        data = await state.get_data()
+        post_type = data.get('post_type')
+        
+        if not post_type:
+            await message.answer("❌ Ошибка: тип поста не выбран.")
+            await safe_clear_state(state)
+            return
+        
+        # Скачиваем фото
+        photo = message.photo[-1]
+        file_info = await message.bot.get_file(photo.file_id)
+        photo_path = dependencies.file_service.get_folder_path('photos') / f"{photo.file_id}.jpg"
+        photo_path.parent.mkdir(parents=True, exist_ok=True)
+        await message.bot.download_file(file_info.file_path, destination=str(photo_path))
+        
+        # Генерируем пост на основе типа
+        post_text, photos = await dependencies.post_service._generate_post_by_type_for_now(post_type, str(photo_path.absolute()))
+        
+        if not post_text or "Нет доступных фотографий" in post_text:
+            await message.answer("❌ Ошибка при генерации поста. Попробуйте снова.")
+            await safe_clear_state(state)
+            return
+        
+        # Публикуем немедленно
+        results = await dependencies.post_service.publish_approved_post(post_text, [str(photo_path.absolute())])
+        
+        await message.answer(
+            f"✅ <b>Пост опубликован!</b>\n\n"
+            f"Тип: <b>{post_type}</b>\n"
+            f"Telegram: {results.get('telegram', 'N/A')}\n"
+            f"VK: {results.get('vk', 'N/A')}",
+            reply_markup=get_main_menu_keyboard(),
+            parse_mode="HTML"
+        )
+        
+        await safe_clear_state(state)
+        
+    except Exception as e:
+        logger.error(f"Ошибка при публикации поста: {e}", exc_info=True)
+        await message.answer(f"❌ Ошибка при публикации: {str(e)}")
+        await safe_clear_state(state)
+
+
+@router.callback_query(F.data == "schedule_edit_post_list")
+async def schedule_edit_post_list(callback: CallbackQuery):
+    """Показывает список постов для редактирования"""
+    if not is_admin(callback.from_user.id):
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
+        return
+    
+    post_types_config = PostTypesConfigService()
+    day_names = {
+        'monday': 'Понедельник',
+        'tuesday': 'Вторник',
+        'wednesday': 'Среда',
+        'thursday': 'Четверг',
+        'friday': 'Пятница',
+        'saturday': 'Суббота'
+    }
+    
+    buttons = []
+    for day_key, day_name in day_names.items():
+        posts = post_types_config.get_post_types(day_key)
+        if posts:
+            for i, post in enumerate(posts):
+                button_text = f"{day_name} - {post.get('time', '09:00')} - {post.get('name', 'Без названия')}"
+                if len(button_text) > 40:
+                    button_text = button_text[:37] + "..."
+                buttons.append([
+                    InlineKeyboardButton(
+                        text=button_text,
+                        callback_data=f"schedule_edit_post_{day_key}_{i}"
+                    )
+                ])
+    
+    if not buttons:
+        await safe_answer_callback(callback, "Нет постов для редактирования", show_alert=True)
+        return
+    
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu_schedule")])
+    
+    await safe_edit_message(
+        callback,
+        "✏️ <b>Редактирование поста</b>\n\nВыберите пост для редактирования:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+    )
+    await safe_answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("schedule_edit_post_"))
+async def schedule_edit_post_start(callback: CallbackQuery, state: FSMContext):
+    """Начинает редактирование поста"""
+    if not is_admin(callback.from_user.id):
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
+        return
+    
+    parts = callback.data.replace("schedule_edit_post_", "").split("_")
+    if len(parts) != 2:
+        await safe_answer_callback(callback, "Ошибка формата", show_alert=True)
+        return
+    
+    day = parts[0]
+    post_index = int(parts[1])
+    
+    post_types_config = PostTypesConfigService()
+    posts = post_types_config.get_post_types(day)
+    
+    if post_index >= len(posts):
+        await safe_answer_callback(callback, "Пост не найден", show_alert=True)
+        return
+    
+    post = posts[post_index]
+    await state.update_data(day=day, post_index=post_index)
+    await state.set_state(SchedulePostStates.waiting_for_time)
+    
+    day_names = {
+        'monday': 'Понедельник',
+        'tuesday': 'Вторник',
+        'wednesday': 'Среда',
+        'thursday': 'Четверг',
+        'friday': 'Пятница',
+        'saturday': 'Суббота'
+    }
+    
+    await safe_edit_message(
+        callback,
+        f"✏️ <b>Редактирование поста</b>\n\n"
+        f"День: <b>{day_names.get(day, day)}</b>\n"
+        f"Текущее время: <b>{post.get('time', '09:00')}</b>\n"
+        f"Текущее название: <b>{post.get('name', 'Без названия')}</b>\n\n"
+        f"Введите новое время в формате <b>HH:MM</b> (или отправьте 'пропустить'):\n\n"
+        f"Или отправьте 'отмена' для отмены:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_schedule")]
+        ])
+    )
+    await safe_answer_callback(callback)
+
+
+@router.callback_query(F.data == "schedule_delete_post_list")
+async def schedule_delete_post_list(callback: CallbackQuery):
+    """Показывает список постов для удаления"""
+    if not is_admin(callback.from_user.id):
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
+        return
+    
+    post_types_config = PostTypesConfigService()
+    day_names = {
+        'monday': 'Понедельник',
+        'tuesday': 'Вторник',
+        'wednesday': 'Среда',
+        'thursday': 'Четверг',
+        'friday': 'Пятница',
+        'saturday': 'Суббота'
+    }
+    
+    buttons = []
+    for day_key, day_name in day_names.items():
+        posts = post_types_config.get_post_types(day_key)
+        if posts:
+            for i, post in enumerate(posts):
+                button_text = f"{day_name} - {post.get('time', '09:00')} - {post.get('name', 'Без названия')}"
+                if len(button_text) > 40:
+                    button_text = button_text[:37] + "..."
+                buttons.append([
+                    InlineKeyboardButton(
+                        text=button_text,
+                        callback_data=f"schedule_delete_post_{day_key}_{i}"
+                    )
+                ])
+    
+    if not buttons:
+        await safe_answer_callback(callback, "Нет постов для удаления", show_alert=True)
+        return
+    
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu_schedule")])
+    
+    await safe_edit_message(
+        callback,
+        "🗑️ <b>Удаление поста</b>\n\nВыберите пост для удаления:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+    )
+    await safe_answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("schedule_delete_post_"))
+async def schedule_delete_post_confirm(callback: CallbackQuery):
+    """Подтверждает и удаляет пост"""
+    if not is_admin(callback.from_user.id):
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
+        return
+    
+    parts = callback.data.replace("schedule_delete_post_", "").split("_")
+    if len(parts) != 2:
+        await safe_answer_callback(callback, "Ошибка формата", show_alert=True)
+        return
+    
+    day = parts[0]
+    post_index = int(parts[1])
+    
+    post_types_config = PostTypesConfigService()
+    success = post_types_config.remove_post(day, post_index)
+    
+    if success:
+        # Обновляем планировщик
+        if dependencies.scheduler_service:
+            dependencies.scheduler_service.setup_schedule()
+        
+        await safe_answer_callback(callback, "Пост удален", show_alert=True)
+        await menu_schedule(callback)
+    else:
+        await safe_answer_callback(callback, "Ошибка при удалении поста", show_alert=True)
 
 
 
