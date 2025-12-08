@@ -37,6 +37,9 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="📅 Запланированные посты", callback_data="menu_scheduled_posts")
         ],
         [
+            InlineKeyboardButton(text="✏️ Редактировать промпты", callback_data="menu_prompts")
+        ],
+        [
             InlineKeyboardButton(text="🔄 Обновить меню", callback_data="menu_refresh")
         ]
     ])
@@ -143,13 +146,10 @@ class EmployeeManagementStates(StatesGroup):
     waiting_for_request_type = State()
 
 
-class EmployeeManagementStates(StatesGroup):
-    """Состояния для управления сотрудниками"""
-    waiting_for_employee_id = State()
-    waiting_for_employee_name = State()
-    waiting_for_employee_role = State()
-    waiting_for_request_text = State()
-    waiting_for_request_type = State()
+class PromptEditStates(StatesGroup):
+    """Состояния для редактирования промптов"""
+    waiting_for_prompt_selection = State()
+    waiting_for_prompt_text = State()
 
 
 def is_admin(user_id: int) -> bool:
@@ -1968,6 +1968,160 @@ async def process_invalid_file(message: Message, state: FSMContext):
         "Или нажмите кнопку для отмены:",
         reply_markup=keyboard
     )
+
+
+@router.callback_query(F.data == "menu_prompts")
+async def menu_prompts(callback: CallbackQuery):
+    """Меню редактирования промптов"""
+    if not is_admin(callback.from_user.id):
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
+        return
+    
+    if not dependencies.prompt_config_service:
+        await safe_answer_callback(callback, "Сервис недоступен", show_alert=True)
+        return
+    
+    prompts = dependencies.prompt_config_service.get_all_prompts()
+    
+    prompts_text = (
+        "✏️ <b>Редактирование промптов</b>\n\n"
+        "Промпты - это инструкции для AI, которые определяют как генерируются посты.\n\n"
+        "Выберите промпт для редактирования:"
+    )
+    
+    keyboard_buttons = []
+    for prompt_key, prompt_info in prompts.items():
+        name = prompt_info.get('name', prompt_key)
+        description = prompt_info.get('description', '')
+        button_text = f"✏️ {name}"
+        if len(button_text) > 30:
+            button_text = button_text[:27] + "..."
+        keyboard_buttons.append([
+            InlineKeyboardButton(
+                text=button_text,
+                callback_data=f"edit_prompt_{prompt_key}"
+            )
+        ])
+    
+    keyboard_buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu_back")])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+    
+    await safe_edit_message(callback, prompts_text, reply_markup=keyboard)
+    await safe_answer_callback(callback)
+
+
+@router.callback_query(F.data.startswith("edit_prompt_"))
+async def edit_prompt_start(callback: CallbackQuery, state: FSMContext):
+    """Начинает редактирование промпта"""
+    if not is_admin(callback.from_user.id):
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
+        return
+    
+    if not dependencies.prompt_config_service:
+        await safe_answer_callback(callback, "Сервис недоступен", show_alert=True)
+        return
+    
+    prompt_key = callback.data.replace("edit_prompt_", "")
+    prompt_info = dependencies.prompt_config_service.get_prompt_info(prompt_key)
+    
+    if not prompt_info:
+        await safe_answer_callback(callback, "Промпт не найден", show_alert=True)
+        return
+    
+    # Определяем тип промпта (system_prompt или user_prompt)
+    prompt_type = "system_prompt" if "system_prompt" in prompt_info else "user_prompt"
+    current_prompt = prompt_info.get(prompt_type, "")
+    
+    # Сохраняем данные в состояние
+    await state.update_data(
+        prompt_key=prompt_key,
+        prompt_type=prompt_type
+    )
+    await state.set_state(PromptEditStates.waiting_for_prompt_text)
+    
+    prompt_name = prompt_info.get('name', prompt_key)
+    prompt_description = prompt_info.get('description', '')
+    
+    # Обрезаем текущий промпт для отображения если слишком длинный
+    display_prompt = current_prompt
+    if len(display_prompt) > 2000:
+        display_prompt = display_prompt[:2000] + "\n\n... (текст обрезан, полный текст будет заменен)"
+    
+    await safe_edit_message(
+        callback,
+        f"✏️ <b>Редактирование промпта</b>\n\n"
+        f"<b>Название:</b> {prompt_name}\n"
+        f"<b>Описание:</b> {prompt_description}\n"
+        f"<b>Тип:</b> {prompt_type}\n\n"
+        f"<b>Текущий промпт:</b>\n\n"
+        f"<code>{display_prompt}</code>\n\n"
+        f"Отправьте новый текст промпта:\n\n"
+        f"Или отправьте 'отмена' для отмены:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_prompts")]
+        ])
+    )
+    await safe_answer_callback(callback)
+
+
+@router.message(PromptEditStates.waiting_for_prompt_text)
+async def process_prompt_text(message: Message, state: FSMContext):
+    """Обрабатывает новый текст промпта"""
+    if not is_admin(message.from_user.id):
+        await message.answer("У вас нет доступа.")
+        await safe_clear_state(state)
+        return
+    
+    if not message.text:
+        await message.answer("Пожалуйста, отправьте текстовое сообщение с промптом.")
+        return
+    
+    if not dependencies.prompt_config_service:
+        await message.answer("Сервис недоступен")
+        await safe_clear_state(state)
+        return
+    
+    # Проверка на отмену
+    if message.text.lower().strip() in ['отмена', 'cancel', 'назад']:
+        await safe_clear_state(state)
+        await message.answer("❌ Редактирование промпта отменено.", reply_markup=get_main_menu_keyboard())
+        return
+    
+    data = await state.get_data()
+    prompt_key = data.get('prompt_key')
+    prompt_type = data.get('prompt_type')
+    
+    if not prompt_key or not prompt_type:
+        await message.answer("Ошибка: не найдены данные промпта для редактирования")
+        await safe_clear_state(state)
+        return
+    
+    new_prompt_text = message.text.strip()
+    
+    try:
+        # Сохраняем новый промпт
+        dependencies.prompt_config_service.set_prompt(prompt_key, prompt_type, new_prompt_text)
+        
+        prompt_info = dependencies.prompt_config_service.get_prompt_info(prompt_key)
+        prompt_name = prompt_info.get('name', prompt_key) if prompt_info else prompt_key
+        
+        await message.answer(
+            f"✅ <b>Промпт успешно обновлен!</b>\n\n"
+            f"<b>Промпт:</b> {prompt_name}\n"
+            f"<b>Тип:</b> {prompt_type}\n\n"
+            f"Изменения вступят в силу при следующей генерации поста.",
+            reply_markup=get_main_menu_keyboard(),
+            parse_mode="HTML"
+        )
+        
+        await safe_clear_state(state)
+        
+    except Exception as e:
+        logger.error(f"Ошибка при сохранении промпта: {e}")
+        await message.answer(
+            f"❌ Ошибка при сохранении промпта: {str(e)}\n\n"
+            f"Попробуйте снова или отправьте 'отмена'."
+        )
 
 
 
