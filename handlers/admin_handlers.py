@@ -2535,6 +2535,19 @@ async def post_now_process_photo(message: Message, state: FSMContext):
 @router.message(PostNowStates.waiting_for_prompt)
 async def post_now_process_prompt(message: Message, state: FSMContext):
     """Обрабатывает промпт и генерирует пост"""
+    logger.info(f"🟡 Обработчик post_now_process_prompt вызван для пользователя {message.from_user.id}")
+    current_state = await state.get_state()
+    logger.info(f"🟡 Текущее состояние FSM: {current_state}")
+    
+    # Если пользователь отправил фото вместо текста, переключаемся на обработку фото
+    if message.photo:
+        logger.warning(f"⚠️ Пользователь отправил фото в состоянии waiting_for_prompt, переключаемся на обработку фото")
+        await state.set_state(PostNowStates.waiting_for_photo)
+        # Рекурсивно вызываем обработчик фото
+        from handlers.admin_handlers import post_now_process_photo
+        await post_now_process_photo(message, state)
+        return
+    
     if not is_admin(message.from_user.id):
         await message.answer("У вас нет доступа.")
         await safe_clear_state(state)
