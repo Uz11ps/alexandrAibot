@@ -2571,11 +2571,18 @@ async def post_now_process_photo(message: Message, state: FSMContext):
             data = await state.get_data()
             album_photos = data.get('album_photos', [])
             album_media_group_id = data.get('album_media_group_id')
+            album_processing_task = data.get('album_processing_task')
             
             # Если это новая медиагруппа или первое фото в группе
             if album_media_group_id != media_group_id:
                 album_photos = []
                 album_media_group_id = media_group_id
+                # Отменяем предыдущую задачу обработки, если она есть
+                if album_processing_task:
+                    try:
+                        album_processing_task.cancel()
+                    except:
+                        pass
             
             # Скачиваем текущее фото
             photo = message.photo[-1]
@@ -2595,10 +2602,58 @@ async def post_now_process_photo(message: Message, state: FSMContext):
             )
             logger.info(f"Фото добавлено в альбом. Всего фото в альбоме: {len(album_photos)}")
             
-            # Если это не последнее фото в альбоме, ждем остальные
-            # (Telegram отправляет альбом несколькими сообщениями)
-            # Отправляем подтверждение получения фото
-            await message.answer(f"✅ Получено фото {len(album_photos)} из альбома. Ожидаю остальные фото...")
+            # Отправляем подтверждение получения фото (только один раз для первого фото)
+            if len(album_photos) == 1:
+                await message.answer(f"✅ Получено фото 1 из альбома. Ожидаю остальные фото...")
+            
+            # Создаем задачу, которая через 2 секунды проверит, не пришло ли новое фото
+            async def process_album_after_delay():
+                import asyncio
+                await asyncio.sleep(2.0)  # Ждем 2 секунды
+                
+                # Проверяем, не изменился ли альбом за это время
+                current_data = await state.get_data()
+                current_album_photos = current_data.get('album_photos', [])
+                current_media_group_id = current_data.get('album_media_group_id')
+                
+                # Если альбом не изменился (то же количество фото и тот же media_group_id), завершаем обработку
+                if (len(current_album_photos) == len(album_photos) and 
+                    current_media_group_id == album_media_group_id and
+                    current_album_photos == album_photos):
+                    
+                    logger.info(f"Альбом завершен. Всего фото: {len(current_album_photos)}")
+                    
+                    # Сохраняем все фото как список
+                    await state.update_data(
+                        photo_paths=current_album_photos,
+                        photo_path=current_album_photos[0] if current_album_photos else None
+                    )
+                    
+                    # Устанавливаем состояние ожидания промпта
+                    await state.set_state(PostNowStates.waiting_for_prompt)
+                    
+                    cancel_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text="❌ Отмена", callback_data="post_now_cancel")]
+                    ])
+                    
+                    photo_text = "фотографий" if len(current_album_photos) > 1 else "фотография"
+                    await message.answer(
+                        f"✅ <b>{len(current_album_photos)} {photo_text} получено!</b>\n\n"
+                        "<b>Шаг 2:</b> Отправьте промпт (описание того, какой пост нужно создать)\n\n"
+                        "Например:\n"
+                        "• \"Создай отчетный пост о текущих объектах\"\n"
+                        "• \"Напиши экспертную статью о земельных вопросах\"\n"
+                        "• \"Сделай пост об услугах компании\"",
+                        reply_markup=cancel_keyboard,
+                        parse_mode="HTML"
+                    )
+                    logger.info("Сообщение с запросом промпта отправлено пользователю")
+            
+            # Создаем и сохраняем задачу обработки альбома
+            import asyncio
+            task = asyncio.create_task(process_album_after_delay())
+            await state.update_data(album_processing_task=task)
+            
             return
         
         # Одиночное фото или последнее фото в альбоме
