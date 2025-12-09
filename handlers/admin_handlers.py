@@ -168,6 +168,7 @@ class PostNowStates(StatesGroup):
     """Состояния для функции 'Опубликовать сейчас'"""
     waiting_for_photo = State()
     waiting_for_prompt = State()
+    waiting_for_approval = State()  # Ожидание одобрения сгенерированного поста
 
 
 def is_admin(user_id: int) -> bool:
@@ -2614,24 +2615,317 @@ async def post_now_process_prompt(message: Message, state: FSMContext):
             await safe_clear_state(state)
             return
         
-        # Публикуем немедленно
-        results = await dependencies.post_service.publish_approved_post(post_text, [photo_path])
+        # Сохраняем сгенерированный пост в состоянии для одобрения
+        await state.update_data(generated_post_text=post_text, generated_photo_path=photo_path)
+        await state.set_state(PostNowStates.waiting_for_approval)
         
-        await message.answer(
+        # Отправляем пост на согласование
+        # Сохраняем фото для черновика
+        dependencies.telegram_service._draft_photos[message.message_id] = [photo_path]
+        
+        # Отправляем пост с кнопками одобрения/редактирования
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Принять и опубликовать", callback_data="post_now_approve"),
+                InlineKeyboardButton(text="✏️ Редактировать", callback_data="post_now_edit")
+            ],
+            [
+                InlineKeyboardButton(text="❌ Отмена", callback_data="post_now_cancel")
+            ]
+        ])
+        
+        # Отправляем фото с текстом поста
+        try:
+            from pathlib import Path
+            photo_file = Path(photo_path)
+            if photo_file.exists():
+                with open(photo_path, 'rb') as photo:
+                    sent_message = await message.answer_photo(
+                        photo=photo,
+                        caption=f"📝 <b>Черновик поста для согласования:</b>\n\n{post_text}",
+                        reply_markup=keyboard,
+                        parse_mode="HTML"
+                    )
+                    # Сохраняем ID сообщения для дальнейшей работы
+                    dependencies.telegram_service._draft_photos[sent_message.message_id] = [photo_path]
+            else:
+                # Если фото не найдено, отправляем только текст
+                await message.answer(
+                    f"📝 <b>Черновик поста для согласования:</b>\n\n{post_text}",
+                    reply_markup=keyboard,
+                    parse_mode="HTML"
+                )
+        except Exception as e:
+            logger.error(f"Ошибка при отправке фото: {e}", exc_info=True)
+            # Fallback: отправляем только текст
+            await message.answer(
+                f"📝 <b>Черновик поста для согласования:</b>\n\n{post_text}",
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+        
+    except Exception as e:
+        logger.error(f"Ошибка при публикации поста: {e}", exc_info=True)
+        await message.answer(f"❌ Ошибка при публикации: {str(e)}")
+        await safe_clear_state(state)
+
+
+# ========== Обработчики одобрения/редактирования для "Опубликовать сейчас" ==========
+
+@router.callback_query(F.data == "post_now_approve")
+async def post_now_approve(callback: CallbackQuery, state: FSMContext):
+    """Обработчик кнопки 'Принять и опубликовать' для функции 'Опубликовать сейчас'"""
+    if not is_admin(callback.from_user.id):
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
+        return
+    
+    try:
+        data = await state.get_data()
+        post_text = data.get('generated_post_text')
+        photo_path = data.get('generated_photo_path')
+        
+        if not post_text:
+            # Пытаемся получить текст из сообщения
+            post_text = callback.message.text or callback.message.caption or ""
+            if post_text:
+                # Убираем заголовок
+                if "Черновик поста для согласования:" in post_text:
+                    post_text = post_text.split("\n\n", 1)[1] if "\n\n" in post_text else post_text.replace("Черновик поста для согласования:", "").strip()
+                post_text = post_text.replace("<b>Черновик поста для согласования:</b>", "").strip()
+        
+        if not post_text:
+            await safe_answer_callback(callback, "Не удалось найти текст поста", show_alert=True)
+            return
+        
+        # Получаем фото из сохраненных путей или из состояния
+        photos = dependencies.telegram_service.get_draft_photos(callback.message.message_id)
+        if not photos and photo_path:
+            photos = [photo_path]
+        
+        if not photos:
+            # Пытаемся скачать из сообщения
+            if callback.message.photo:
+                try:
+                    photo = callback.message.photo[-1]
+                    file_info = await callback.message.bot.get_file(photo.file_id)
+                    temp_path = dependencies.file_service.get_folder_path('photos') / f"{photo.file_id}.jpg"
+                    temp_path.parent.mkdir(parents=True, exist_ok=True)
+                    await callback.message.bot.download_file(file_info.file_path, destination=str(temp_path))
+                    photos = [str(temp_path.absolute())]
+                except Exception as e:
+                    logger.error(f"Ошибка при скачивании фотографии: {e}", exc_info=True)
+        
+        await safe_answer_callback(callback, "Публикую пост...")
+        
+        # Публикуем пост
+        results = await dependencies.post_service.publish_approved_post(post_text, photos or [])
+        
+        await safe_edit_message(
+            callback,
             f"✅ <b>Пост опубликован!</b>\n\n"
-            f"📝 Промпт: <b>{prompt[:100]}{'...' if len(prompt) > 100 else ''}</b>\n"
-            f"📸 Фото: прикреплено\n\n"
             f"Telegram: {results.get('telegram', 'N/A')}\n"
             f"VK: {results.get('vk', 'N/A')}",
-            reply_markup=get_main_menu_keyboard(),
-            parse_mode="HTML"
+            reply_markup=None
         )
         
         await safe_clear_state(state)
         
     except Exception as e:
         logger.error(f"Ошибка при публикации поста: {e}", exc_info=True)
-        await message.answer(f"❌ Ошибка при публикации: {str(e)}")
+        await safe_answer_callback(callback, f"Ошибка: {str(e)}", show_alert=True)
+
+
+@router.callback_query(F.data == "post_now_edit")
+async def post_now_edit(callback: CallbackQuery, state: FSMContext):
+    """Обработчик кнопки 'Редактировать' для функции 'Опубликовать сейчас'"""
+    if not is_admin(callback.from_user.id):
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
+        return
+    
+    await safe_answer_callback(callback)
+    
+    # Получаем текст поста из сообщения
+    post_text = callback.message.text or callback.message.caption or ""
+    if post_text:
+        # Убираем заголовок
+        if "Черновик поста для согласования:" in post_text:
+            post_text = post_text.split("\n\n", 1)[1] if "\n\n" in post_text else post_text.replace("Черновик поста для согласования:", "").strip()
+        post_text = post_text.replace("<b>Черновик поста для согласования:</b>", "").strip()
+    
+    # Сохраняем исходный текст и фото в состоянии
+    data = await state.get_data()
+    photo_path = data.get('generated_photo_path')
+    
+    await state.update_data(
+        original_post_text=post_text,
+        original_photo_path=photo_path
+    )
+    
+    # Переходим в состояние ожидания правок (используем существующее состояние)
+    await state.set_state(PostApprovalStates.waiting_for_edits)
+    
+    await callback.message.answer(
+        "✏️ <b>Редактирование поста</b>\n\n"
+        "Пожалуйста, отправьте текст правок для этого поста:\n\n"
+        "Например:\n"
+        "• \"сократи текст в 3 раза\"\n"
+        "• \"добавь больше эмодзи\"\n"
+        "• \"измени стиль на более дружелюбный\"\n\n"
+        "Или отправьте 'отмена' для отмены:",
+        parse_mode="HTML"
+    )
+
+
+@router.callback_query(F.data == "post_now_cancel")
+async def post_now_cancel(callback: CallbackQuery, state: FSMContext):
+    """Обработчик кнопки 'Отмена' для функции 'Опубликовать сейчас'"""
+    if not is_admin(callback.from_user.id):
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
+        return
+    
+    await safe_answer_callback(callback, "Публикация отменена", show_alert=True)
+    await safe_edit_message(
+        callback,
+        "❌ <b>Публикация отменена</b>",
+        reply_markup=None
+    )
+    await safe_clear_state(state)
+
+
+# Модифицируем обработчик process_edits для поддержки функции "Опубликовать сейчас"
+@router.message(PostApprovalStates.waiting_for_edits)
+async def process_edits(message: Message, state: FSMContext):
+    """Обрабатывает правки от администратора (для обычных черновиков, запланированных постов и 'Опубликовать сейчас')"""
+    if not is_admin(message.from_user.id):
+        await message.answer("У вас нет доступа.")
+        await safe_clear_state(state)
+        return
+    
+    # Проверка на отмену
+    if message.text and message.text.lower().strip() in ['отмена', 'cancel', 'назад']:
+        await safe_clear_state(state)
+        await message.answer("❌ Редактирование отменено.", reply_markup=get_main_menu_keyboard())
+        return
+    
+    if not message.text:
+        await message.answer("Пожалуйста, отправьте текстовое сообщение с правками.")
+        return
+    
+    if not dependencies.post_service:
+        await message.answer("Сервис недоступен")
+        await safe_clear_state(state)
+        return
+    
+    edits = message.text.strip()
+    
+    if not edits:
+        await message.answer("Пожалуйста, отправьте текст правок.")
+        return
+    
+    data = await state.get_data()
+    day_of_week = data.get('scheduled_post_day')  # Проверяем, редактируется ли запланированный пост
+    original_post_text = data.get('original_post_text', '')
+    original_photos = data.get('original_photos', [])
+    original_photo_path = data.get('original_photo_path')  # Для функции "Опубликовать сейчас"
+    
+    if not original_post_text:
+        await message.answer("Не удалось найти исходный текст поста. Попробуйте создать пост заново.")
+        await safe_clear_state(state)
+        return
+    
+    try:
+        await message.answer("⏳ Перерабатываю пост с учетом ваших правок...")
+        
+        # Перерабатываем пост через AI
+        logger.info(f"Переработка поста. Исходный текст: {len(original_post_text)} символов. Правки: {edits}")
+        refined_post = await dependencies.post_service.refine_post(original_post_text, edits)
+        logger.info(f"Пост переработан. Новый текст: {len(refined_post)} символов")
+        
+        # Если это запланированный пост, обновляем его
+        if day_of_week and dependencies.scheduled_posts_service:
+            dependencies.scheduled_posts_service.add_scheduled_post(
+                day_of_week=day_of_week,
+                post_text=refined_post,
+                photos=original_photos,
+                admin_id=message.from_user.id
+            )
+            
+            day_names = {
+                'monday': 'Понедельник',
+                'tuesday': 'Вторник',
+                'wednesday': 'Среда',
+                'thursday': 'Четверг',
+                'friday': 'Пятница',
+                'saturday': 'Суббота'
+            }
+            day_name = day_names.get(day_of_week, day_of_week)
+            
+            await message.answer(
+                f"✅ <b>Запланированный пост обновлен!</b>\n\n"
+                f"📅 День: <b>{day_name}</b>\n\n"
+                f"Пост будет опубликован в запланированное время.",
+                reply_markup=get_main_menu_keyboard(),
+                parse_mode="HTML"
+            )
+        elif original_photo_path:
+            # Это функция "Опубликовать сейчас" - отправляем на повторное согласование
+            await state.update_data(generated_post_text=refined_post, generated_photo_path=original_photo_path)
+            await state.set_state(PostNowStates.waiting_for_approval)
+            
+            # Сохраняем фото для черновика
+            dependencies.telegram_service._draft_photos[message.message_id] = [original_photo_path]
+            
+            # Отправляем переработанный пост на согласование
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="✅ Принять и опубликовать", callback_data="post_now_approve"),
+                    InlineKeyboardButton(text="✏️ Редактировать", callback_data="post_now_edit")
+                ],
+                [
+                    InlineKeyboardButton(text="❌ Отмена", callback_data="post_now_cancel")
+                ]
+            ])
+            
+            try:
+                from pathlib import Path
+                photo_file = Path(original_photo_path)
+                if photo_file.exists():
+                    with open(original_photo_path, 'rb') as photo:
+                        sent_message = await message.answer_photo(
+                            photo=photo,
+                            caption=f"📝 <b>Черновик поста для согласования (после правок):</b>\n\n{refined_post}",
+                            reply_markup=keyboard,
+                            parse_mode="HTML"
+                        )
+                        dependencies.telegram_service._draft_photos[sent_message.message_id] = [original_photo_path]
+                else:
+                    await message.answer(
+                        f"📝 <b>Черновик поста для согласования (после правок):</b>\n\n{refined_post}",
+                        reply_markup=keyboard,
+                        parse_mode="HTML"
+                    )
+            except Exception as e:
+                logger.error(f"Ошибка при отправке фото: {e}", exc_info=True)
+                await message.answer(
+                    f"📝 <b>Черновик поста для согласования (после правок):</b>\n\n{refined_post}",
+                    reply_markup=keyboard,
+                    parse_mode="HTML"
+                )
+        else:
+            # Обычный черновик - отправляем на согласование
+            await dependencies.post_service.send_for_approval(refined_post, original_photos)
+            
+            await message.answer(
+                "✅ <b>Пост переработан и отправлен на согласование!</b>\n\n"
+                f"Новая длина: {len(refined_post)} символов",
+                parse_mode="HTML"
+            )
+        
+        await safe_clear_state(state)
+    
+    except Exception as e:
+        logger.error(f"Ошибка при переработке поста: {e}", exc_info=True)
+        await message.answer(f"❌ Ошибка при переработке поста: {str(e)}")
         await safe_clear_state(state)
 
 
