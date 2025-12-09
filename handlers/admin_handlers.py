@@ -2990,7 +2990,12 @@ async def process_edits(message: Message, state: FSMContext):
     day_of_week = data.get('scheduled_post_day')  # Проверяем, редактируется ли запланированный пост
     original_post_text = data.get('original_post_text', '')
     original_photos = data.get('original_photos', [])
-    original_photo_path = data.get('original_photo_path')  # Для функции "Опубликовать сейчас"
+    original_photo_paths = data.get('original_photo_paths', [])  # Для функции "Опубликовать сейчас"
+    original_photo_path = data.get('original_photo_path')  # Для обратной совместимости
+    
+    # Если нет списка фото, используем одно фото
+    if not original_photo_paths and original_photo_path:
+        original_photo_paths = [original_photo_path]
     
     if not original_post_text:
         await message.answer("Не удалось найти исходный текст поста. Попробуйте создать пост заново.")
