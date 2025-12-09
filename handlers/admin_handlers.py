@@ -2610,8 +2610,14 @@ async def post_now_process_photo(message: Message, state: FSMContext):
             logger.info(f"Фото добавлено в альбом. Всего фото в альбоме: {len(album_photos)}")
             
             # Отправляем подтверждение получения фото (только один раз для первого фото)
-            if len(album_photos) == 1:
+            # Используем флаг в состоянии, чтобы не отправлять сообщение повторно
+            album_message_sent = data.get('album_message_sent', False)
+            if not album_message_sent:
                 await message.answer(f"✅ Получено фото 1 из альбома. Ожидаю остальные фото...")
+                await state.update_data(album_message_sent=True)
+            
+            # Сохраняем количество фото на момент создания задачи для сравнения
+            photos_count_at_task_creation = len(album_photos)
             
             # Создаем задачу, которая через 2 секунды проверит, не пришло ли новое фото
             async def process_album_after_delay():
@@ -2624,7 +2630,7 @@ async def post_now_process_photo(message: Message, state: FSMContext):
                 current_media_group_id = current_data.get('album_media_group_id')
                 
                 # Если альбом не изменился (то же количество фото и тот же media_group_id), завершаем обработку
-                if (len(current_album_photos) == len(album_photos) and 
+                if (len(current_album_photos) == photos_count_at_task_creation and 
                     current_media_group_id == album_media_group_id):
                     
                     logger.info(f"Альбом завершен. Всего фото: {len(current_album_photos)}")
@@ -2635,8 +2641,9 @@ async def post_now_process_photo(message: Message, state: FSMContext):
                     
                     # Сохраняем все фото как список
                     await state.update_data(
-                        photo_paths=current_album_photos,
-                        photo_path=current_album_photos[0] if current_album_photos else None
+                        photo_paths=current_album_photos.copy(),
+                        photo_path=current_album_photos[0] if current_album_photos else None,
+                        album_message_sent=False  # Сбрасываем флаг для следующего альбома
                     )
                     
                     # Устанавливаем состояние ожидания промпта
