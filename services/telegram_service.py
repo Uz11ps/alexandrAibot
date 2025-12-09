@@ -16,6 +16,14 @@ class TelegramService:
         self.admin_id = settings.TELEGRAM_ADMIN_ID
         self.channel_id = settings.TELEGRAM_CHANNEL_ID
         self._draft_photos = {}  # Словарь для хранения путей к фотографиям черновиков
+        
+        # Собираем список всех администраторов
+        self.admin_ids = [settings.TELEGRAM_ADMIN_ID]
+        if settings.TELEGRAM_ADMIN_IDS:
+            admin_ids_list = [int(id.strip()) for id in settings.TELEGRAM_ADMIN_IDS.split(',') if id.strip()]
+            self.admin_ids.extend(admin_ids_list)
+        
+        logger.info(f"Инициализирован TelegramService с {len(self.admin_ids)} администраторами: {self.admin_ids}")
     
     async def send_draft_for_approval(
         self,
@@ -24,7 +32,7 @@ class TelegramService:
         day_of_week: Optional[str] = None
     ) -> int:
         """
-        Отправляет черновик поста руководителю на согласование
+        Отправляет черновик поста всем администраторам на согласование
         
         Args:
             draft_text: Текст черновика
@@ -32,7 +40,7 @@ class TelegramService:
             day_of_week: День недели для планирования ("monday", "tuesday", etc.) или None для немедленной публикации
             
         Returns:
-            ID сообщения для отслеживания
+            ID первого отправленного сообщения для отслеживания
         """
         try:
             # Формируем callback_data для кнопки "Принять" с указанием дня недели
@@ -52,62 +60,75 @@ class TelegramService:
             # Telegram ограничивает caption до 1024 символов
             MAX_CAPTION_LENGTH = 1024
             header = "<b>Черновик поста для согласования:</b>\n\n"
-            header_length = len(header.replace("<b>", "").replace("</b>", ""))  # Примерная длина без HTML
             
-            if photos and len(photos) > 0:
-                # Если текст с заголовком помещается в caption
-                full_text = f"{header}{draft_text}"
-                if len(full_text) <= MAX_CAPTION_LENGTH:
-                    photo_file = FSInputFile(photos[0])
-                    message = await self.bot.send_photo(
-                        chat_id=self.admin_id,
-                        photo=photo_file,
-                        caption=full_text,
-                        reply_markup=keyboard,
-                        parse_mode="HTML"
-                    )
-                else:
-                    # Если текст слишком длинный, отправляем фото с коротким caption
-                    # и полный текст отдельным сообщением
-                    short_caption = f"{header}📝 Полный текст ниже ⬇️"
-                    photo_file = FSInputFile(photos[0])
-                    photo_message = await self.bot.send_photo(
-                        chat_id=self.admin_id,
-                        photo=photo_file,
-                        caption=short_caption,
-                        parse_mode="HTML"
-                    )
-                    
-                    # Отправляем полный текст отдельным сообщением с кнопками
-                    message = await self.bot.send_message(
-                        chat_id=self.admin_id,
-                        text=full_text,
-                        reply_markup=keyboard,
-                        parse_mode="HTML"
-                    )
-                    
-                    # Сохраняем фотографии для текстового сообщения (оно содержит кнопки)
-                    self._draft_photos[message.message_id] = photos.copy()
-                    logger.info(f"Сохранены пути к фотографиям для текстового сообщения {message.message_id}: {photos}")
-            else:
-                message_text = f"{header}{draft_text}"
-                message = await self.bot.send_message(
-                    chat_id=self.admin_id,
-                    text=message_text,
-                    reply_markup=keyboard,
-                    parse_mode="HTML"
-                )
+            first_message_id = None
             
-            logger.info(f"Черновик отправлен руководителю: {message.message_id}, фото: {len(photos) if photos else 0}")
+            # Отправляем черновик всем администраторам
+            for admin_id in self.admin_ids:
+                try:
+                    if photos and len(photos) > 0:
+                        # Если текст с заголовком помещается в caption
+                        full_text = f"{header}{draft_text}"
+                        if len(full_text) <= MAX_CAPTION_LENGTH:
+                            photo_file = FSInputFile(photos[0])
+                            message = await self.bot.send_photo(
+                                chat_id=admin_id,
+                                photo=photo_file,
+                                caption=full_text,
+                                reply_markup=keyboard,
+                                parse_mode="HTML"
+                            )
+                            # Сохраняем фотографии для этого сообщения
+                            self._draft_photos[message.message_id] = photos.copy()
+                            if first_message_id is None:
+                                first_message_id = message.message_id
+                            logger.info(f"Черновик отправлен администратору {admin_id}: {message.message_id}, фото: {len(photos)}")
+                        else:
+                            # Если текст слишком длинный, отправляем фото с коротким caption
+                            # и полный текст отдельным сообщением
+                            short_caption = f"{header}📝 Полный текст ниже ⬇️"
+                            photo_file = FSInputFile(photos[0])
+                            photo_message = await self.bot.send_photo(
+                                chat_id=admin_id,
+                                photo=photo_file,
+                                caption=short_caption,
+                                parse_mode="HTML"
+                            )
+                            
+                            # Отправляем полный текст отдельным сообщением с кнопками
+                            message = await self.bot.send_message(
+                                chat_id=admin_id,
+                                text=full_text,
+                                reply_markup=keyboard,
+                                parse_mode="HTML"
+                            )
+                            
+                            # Сохраняем фотографии для текстового сообщения (оно содержит кнопки)
+                            self._draft_photos[message.message_id] = photos.copy()
+                            if first_message_id is None:
+                                first_message_id = message.message_id
+                            logger.info(f"Черновик отправлен администратору {admin_id}: {message.message_id}, фото: {len(photos)}")
+                    else:
+                        message_text = f"{header}{draft_text}"
+                        message = await self.bot.send_message(
+                            chat_id=admin_id,
+                            text=message_text,
+                            reply_markup=keyboard,
+                            parse_mode="HTML"
+                        )
+                        if first_message_id is None:
+                            first_message_id = message.message_id
+                        logger.info(f"Черновик отправлен администратору {admin_id}: {message.message_id}, без фото")
+                
+                except Exception as e:
+                    logger.error(f"Ошибка при отправке черновика администратору {admin_id}: {e}")
+                    # Продолжаем отправку другим администраторам даже если один не получил
             
-            # Сохраняем пути к фотографиям для последующей публикации
-            # Используем message_id как ключ для хранения фотографий
-            if photos and len(photos) > 0:
-                # Сохраняем в атрибуте класса для доступа из обработчиков
-                self._draft_photos[message.message_id] = photos.copy()
-                logger.info(f"Сохранены пути к фотографиям для сообщения {message.message_id}: {photos}")
+            if first_message_id is None:
+                raise Exception("Не удалось отправить черновик ни одному администратору")
             
-            return message.message_id
+            logger.info(f"Черновик отправлен {len(self.admin_ids)} администраторам, первый message_id: {first_message_id}")
+            return first_message_id
         
         except Exception as e:
             logger.error(f"Ошибка при отправке черновика: {e}")
