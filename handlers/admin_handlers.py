@@ -269,16 +269,26 @@ async def menu_status(callback: CallbackQuery):
                 f.get('mimeType', '') in image_mime_types or 
                 Path(f.get('name', '')).suffix.lower() in image_extensions)
     
+    # Получаем список всех администраторов
+    admin_ids = [settings.TELEGRAM_ADMIN_ID]
+    if settings.TELEGRAM_ADMIN_IDS:
+        admin_ids_list = [int(id.strip()) for id in settings.TELEGRAM_ADMIN_IDS.split(',') if id.strip()]
+        admin_ids.extend(admin_ids_list)
+    
+    admin_list = "\n".join([f"  • <code>{admin_id}</code>" for admin_id in admin_ids])
+    
     status_text = (
         f"📊 <b>Статус бота</b>\n\n"
         f"Планировщик: {'✅ Включен' if dependencies.scheduler_service.is_enabled else '❌ Выключен'}\n"
         f"Задач в расписании: {len(dependencies.scheduler_service.scheduler.get_jobs())}\n"
         f"Google Drive: {'✅ Включен' if (dependencies.file_service and dependencies.file_service.google_drive and dependencies.file_service.google_drive.enabled) else '❌ Выключен'}\n"
         f"Фотографий в Drive: <b>{photos_count}</b>\n\n"
+        f"👥 <b>Администраторы ({len(admin_ids)}):</b>\n{admin_list}\n\n"
         f"Бот работает и готов к работе!"
     )
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🧪 Тест уведомлений", callback_data="test_notifications")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="menu_back")]
     ])
     
