@@ -578,7 +578,105 @@ class AIService:
         logger.info(f"Анализ всех фотографий завершен. Общая длина описания: {len(combined_description)} символов")
         
         return combined_description
+    
+    async def analyze_video(self, video_path: str, frames_count: int = 5) -> str:
+        """
+        Анализирует видео, извлекая ключевые кадры и анализируя их через AI
         
+        Args:
+            video_path: Путь к файлу видео
+            frames_count: Количество кадров для анализа (по умолчанию 5)
+            
+        Returns:
+            Объединенное описание содержимого видео на основе анализа кадров
+        """
+        try:
+            import cv2
+            import tempfile
+            from pathlib import Path
+            
+            logger.info(f"Начинаем анализ видео: {video_path}")
+            
+            # Открываем видео
+            cap = cv2.VideoCapture(video_path)
+            if not cap.isOpened():
+                logger.error(f"Не удалось открыть видео: {video_path}")
+                return f"Видео со строительного объекта. [Ошибка: не удалось открыть видео]"
+            
+            # Получаем общее количество кадров и FPS
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            duration = total_frames / fps if fps > 0 else 0
+            
+            logger.info(f"Видео: {total_frames} кадров, {fps:.2f} FPS, длительность ~{duration:.2f} секунд")
+            
+            # Вычисляем шаг для равномерного распределения кадров
+            if total_frames < frames_count:
+                frame_indices = list(range(total_frames))
+            else:
+                step = total_frames // (frames_count + 1)
+                frame_indices = [step * (i + 1) for i in range(frames_count)]
+            
+            logger.info(f"Будем анализировать кадры: {frame_indices}")
+            
+            # Извлекаем и анализируем кадры
+            frame_descriptions = []
+            temp_dir = Path(tempfile.gettempdir()) / "video_frames"
+            temp_dir.mkdir(exist_ok=True)
+            
+            for i, frame_idx in enumerate(frame_indices):
+                try:
+                    # Переходим к нужному кадру
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+                    ret, frame = cap.read()
+                    
+                    if not ret:
+                        logger.warning(f"Не удалось прочитать кадр {frame_idx}")
+                        continue
+                    
+                    # Сохраняем кадр во временный файл
+                    frame_path = temp_dir / f"frame_{i}_{frame_idx}.jpg"
+                    cv2.imwrite(str(frame_path), frame)
+                    
+                    # Анализируем кадр через AI
+                    logger.info(f"Анализ кадра {i+1}/{len(frame_indices)} (кадр {frame_idx}/{total_frames})")
+                    frame_description = await self.analyze_photo(str(frame_path))
+                    
+                    # Добавляем временную метку
+                    timestamp = frame_idx / fps if fps > 0 else 0
+                    frame_descriptions.append(f"Кадр {i+1} (время {timestamp:.1f}с): {frame_description}")
+                    
+                    # Удаляем временный файл
+                    try:
+                        frame_path.unlink()
+                    except Exception as e:
+                        logger.warning(f"Не удалось удалить временный файл {frame_path}: {e}")
+                    
+                except Exception as e:
+                    logger.error(f"Ошибка при обработке кадра {frame_idx}: {e}")
+                    continue
+            
+            cap.release()
+            
+            if not frame_descriptions:
+                logger.warning("Не удалось проанализировать ни один кадр")
+                return f"Видео со строительного объекта. [Ошибка: не удалось извлечь кадры]"
+            
+            # Объединяем описания кадров
+            combined_description = "\n\n".join(frame_descriptions)
+            logger.info(f"Анализ видео завершен. Проанализировано кадров: {len(frame_descriptions)}")
+            
+            return combined_description
+            
+        except ImportError:
+            logger.error("opencv-python не установлен. Установите его: pip install opencv-python-headless")
+            return f"Видео со строительного объекта. [Ошибка: библиотека для работы с видео не установлена]"
+        except Exception as e:
+            logger.error(f"Ошибка при анализе видео: {e}", exc_info=True)
+            from pathlib import Path
+            file_name = Path(video_path).name
+            return f"Видео со строительного объекта: {file_name}. [Ошибка при анализе: {str(e)}]"
+    
         except Exception as e:
             error_str = str(e)
             logger.error(f"Ошибка при анализе фотографии: {e}")
