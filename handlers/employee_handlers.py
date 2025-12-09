@@ -14,11 +14,13 @@ router = Router()
 async def handle_photo_from_employee(message: Message, state: FSMContext):
     """Обрабатывает фотографии от сотрудников"""
     from services import dependencies
-    from config.settings import settings
+    from handlers.admin_handlers import is_admin
     
-    # Пропускаем сообщения от администратора (они обрабатываются в employee_admin_handlers)
-    if message.from_user.id == settings.TELEGRAM_ADMIN_ID:
+    # Пропускаем сообщения от администратора (они обрабатываются в admin_handlers)
+    if is_admin(message.from_user.id):
         current_state = await state.get_state()
+        # Если администратор находится в каком-либо FSM состоянии, пропускаем обработку
+        # Это позволит FSM обработчикам из admin_handlers обработать сообщение
         if current_state:
             return
     
@@ -69,11 +71,12 @@ async def handle_photo_from_employee(message: Message, state: FSMContext):
 async def handle_document_from_employee(message: Message, state: FSMContext):
     """Обрабатывает документы от сотрудников"""
     from services import dependencies
-    from config.settings import settings
+    from handlers.admin_handlers import is_admin
     
-    # Пропускаем сообщения от администратора (они обрабатываются в employee_admin_handlers)
-    if message.from_user.id == settings.TELEGRAM_ADMIN_ID:
+    # Пропускаем сообщения от администратора (они обрабатываются в admin_handlers)
+    if is_admin(message.from_user.id):
         current_state = await state.get_state()
+        # Если администратор находится в каком-либо FSM состоянии, пропускаем обработку
         if current_state:
             return
     
