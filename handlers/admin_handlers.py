@@ -2580,8 +2580,13 @@ async def post_now_process_prompt(message: Message, state: FSMContext):
         except:
             pass
         
-        if not post_text or "Ошибка" in post_text:
-            await message.answer(f"❌ Ошибка при генерации поста: {post_text}")
+        if not post_text or "Ошибка" in post_text or post_text.startswith("Ошибка"):
+            await message.answer(
+                f"❌ <b>Ошибка при генерации поста</b>\n\n"
+                f"{post_text}\n\n"
+                f"Попробуйте снова или проверьте логи на сервере.",
+                parse_mode="HTML"
+            )
             await safe_clear_state(state)
             return
         
