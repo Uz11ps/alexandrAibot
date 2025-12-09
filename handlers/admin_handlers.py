@@ -2779,14 +2779,18 @@ async def post_now_edit(callback: CallbackQuery, state: FSMContext):
     # Переходим в состояние ожидания правок (используем существующее состояние)
     await state.set_state(PostApprovalStates.waiting_for_edits)
     
+    cancel_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="post_now_cancel")]
+    ])
+    
     await callback.message.answer(
         "✏️ <b>Редактирование поста</b>\n\n"
         "Пожалуйста, отправьте текст правок для этого поста:\n\n"
         "Например:\n"
         "• \"сократи текст в 3 раза\"\n"
         "• \"добавь больше эмодзи\"\n"
-        "• \"измени стиль на более дружелюбный\"\n\n"
-        "Или отправьте 'отмена' для отмены:",
+        "• \"измени стиль на более дружелюбный\"",
+        reply_markup=cancel_keyboard,
         parse_mode="HTML"
     )
 
