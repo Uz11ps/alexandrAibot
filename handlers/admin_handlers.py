@@ -2567,31 +2567,23 @@ async def post_now_process_photo(message: Message, state: FSMContext):
         # Проверяем, является ли это частью альбома
         media_group_id = message.media_group_id
         if media_group_id:
-            # Глобальный словарь для хранения активных задач обработки альбомов
-            # Ключ: (user_id, media_group_id), значение: asyncio.Task
+            # Глобальные словари для хранения данных альбомов и задач обработки
+            # Ключ: (user_id, media_group_id)
             if not hasattr(post_now_process_photo, '_album_tasks'):
                 post_now_process_photo._album_tasks = {}
-            
-            # Это альбом - сохраняем информацию о медиагруппе
-            data = await state.get_data()
-            album_photos = data.get('album_photos', [])
-            album_media_group_id = data.get('album_media_group_id')
+            if not hasattr(post_now_process_photo, '_album_data'):
+                post_now_process_photo._album_data = {}
+            if not hasattr(post_now_process_photo, '_album_message_sent'):
+                post_now_process_photo._album_message_sent = set()
             
             task_key = (message.from_user.id, media_group_id)
             
-            # Если это новая медиагруппа или первое фото в группе
-            if album_media_group_id != media_group_id:
-                album_photos = []
-                album_media_group_id = media_group_id
-                # Отменяем предыдущую задачу обработки для этого пользователя и media_group_id, если она есть
-                if task_key in post_now_process_photo._album_tasks:
-                    try:
-                        post_now_process_photo._album_tasks[task_key].cancel()
-                    except:
-                        pass
-                    del post_now_process_photo._album_tasks[task_key]
-                # Сбрасываем флаг отправки сообщения для нового альбома
-                await state.update_data(album_message_sent=False)
+            # Инициализируем данные альбома, если это новый альбом
+            if task_key not in post_now_process_photo._album_data:
+                post_now_process_photo._album_data[task_key] = {
+                    'photos': [],
+                    'state': state
+                }
             
             # Скачиваем текущее фото
             photo = message.photo[-1]
@@ -2601,22 +2593,16 @@ async def post_now_process_photo(message: Message, state: FSMContext):
             await message.bot.download_file(file_info.file_path, destination=str(photo_path))
             logger.info(f"Фото из альбома скачано: {photo_path.absolute()}")
             
-            # Добавляем фото в альбом
-            album_photos.append(str(photo_path.absolute()))
+            # Добавляем фото в глобальный словарь альбома
+            post_now_process_photo._album_data[task_key]['photos'].append(str(photo_path.absolute()))
+            album_photos = post_now_process_photo._album_data[task_key]['photos']
             
-            # Сохраняем обновленный альбом в состоянии
-            await state.update_data(
-                album_photos=album_photos,
-                album_media_group_id=album_media_group_id
-            )
             logger.info(f"Фото добавлено в альбом. Всего фото в альбоме: {len(album_photos)}")
             
-            # Отправляем подтверждение получения фото (только один раз для первого фото)
-            # Используем флаг в состоянии, чтобы не отправлять сообщение повторно
-            album_message_sent = data.get('album_message_sent', False)
-            if not album_message_sent:
+            # Отправляем подтверждение получения фото (только один раз для каждого альбома)
+            if task_key not in post_now_process_photo._album_message_sent:
                 await message.answer(f"✅ Получено фото 1 из альбома. Ожидаю остальные фото...")
-                await state.update_data(album_message_sent=True)
+                post_now_process_photo._album_message_sent.add(task_key)
             
             # Сохраняем количество фото на момент создания задачи для сравнения
             photos_count_at_task_creation = len(album_photos)
@@ -2626,30 +2612,34 @@ async def post_now_process_photo(message: Message, state: FSMContext):
                 import asyncio
                 await asyncio.sleep(2.0)  # Ждем 2 секунды
                 
-                # Проверяем, не изменился ли альбом за это время
-                current_data = await state.get_data()
-                current_album_photos = current_data.get('album_photos', [])
-                current_media_group_id = current_data.get('album_media_group_id')
+                # Проверяем данные альбома из глобального словаря
+                if task_key not in post_now_process_photo._album_data:
+                    return
                 
-                # Если альбом не изменился (то же количество фото и тот же media_group_id), завершаем обработку
-                if (len(current_album_photos) == photos_count_at_task_creation and 
-                    current_media_group_id == album_media_group_id):
+                current_album_photos = post_now_process_photo._album_data[task_key]['photos']
+                album_state = post_now_process_photo._album_data[task_key]['state']
+                
+                # Если альбом не изменился (то же количество фото), завершаем обработку
+                if len(current_album_photos) == photos_count_at_task_creation:
                     
                     logger.info(f"Альбом завершен. Всего фото: {len(current_album_photos)}")
                     
-                    # Удаляем задачу из словаря
+                    # Удаляем задачу и данные альбома из словарей
                     if task_key in post_now_process_photo._album_tasks:
                         del post_now_process_photo._album_tasks[task_key]
+                    if task_key in post_now_process_photo._album_data:
+                        del post_now_process_photo._album_data[task_key]
+                    if task_key in post_now_process_photo._album_message_sent:
+                        post_now_process_photo._album_message_sent.remove(task_key)
                     
-                    # Сохраняем все фото как список
-                    await state.update_data(
+                    # Сохраняем все фото как список в состоянии
+                    await album_state.update_data(
                         photo_paths=current_album_photos.copy(),
-                        photo_path=current_album_photos[0] if current_album_photos else None,
-                        album_message_sent=False  # Сбрасываем флаг для следующего альбома
+                        photo_path=current_album_photos[0] if current_album_photos else None
                     )
                     
                     # Устанавливаем состояние ожидания промпта
-                    await state.set_state(PostNowStates.waiting_for_prompt)
+                    await album_state.set_state(PostNowStates.waiting_for_prompt)
                     
                     cancel_keyboard = InlineKeyboardMarkup(inline_keyboard=[
                         [InlineKeyboardButton(text="❌ Отмена", callback_data="post_now_cancel")]
