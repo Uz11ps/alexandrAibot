@@ -420,29 +420,44 @@ class PostService:
             Кортеж (текст поста, список путей к фотографиям)
         """
         try:
+            logger.info(f"Начало генерации поста для 'Опубликовать сейчас'")
+            logger.info(f"Промпт пользователя: {user_prompt}")
+            logger.info(f"Путь к фото: {photo_path}")
+            
+            # Проверяем существование файла
+            from pathlib import Path
+            photo_file = Path(photo_path)
+            if not photo_file.exists():
+                logger.error(f"Файл фото не найден: {photo_path}")
+                return f"Ошибка: файл фотографии не найден: {photo_path}", []
+            
             # Анализируем фото через AI
-            logger.info(f"Анализ фотографии для промпта: {user_prompt[:50]}...")
+            logger.info(f"Анализ фотографии через AI...")
             photo_description = await self.ai_service.analyze_photo(photo_path)
+            logger.info(f"Описание фото получено: {photo_description[:100]}...")
             
-            # Формируем финальный промпт для генерации поста
-            # Используем системный промпт из конфигурации и добавляем пользовательский промпт и описание фото
-            system_prompt = f"""Создай КОРОТКИЙ пост для компании "Археон" на основе следующего запроса пользователя и анализа фотографии.
-
-Запрос пользователя: {user_prompt}
-
-Описание фотографии: {photo_description}
-
-Требования:
-- Текст поста НЕ ДОЛЖЕН превышать 900 символов (включая пробелы и эмодзи)
-- Используй много эмодзи для визуального оформления
-- Пиши короткими абзацами
-- Не добавляй мета-комментарии или дополнительные пояснения
-- Стиль: профессиональный, но понятный и дружелюбный
-
-Создай пост, который соответствует запросу пользователя и использует информацию из фотографии."""
+            # Формируем промпт для генерации поста
+            # Используем пользовательский промпт как основной запрос, а описание фото как контекст
+            prompt = f"{user_prompt}\n\nИспользуй информацию из фотографии для создания поста."
             
-            # Генерируем текст поста
-            post_text = await self.ai_service.generate_post_text(system_prompt)
+            # Генерируем текст поста, передавая описание фото как photos_description
+            logger.info("Генерация текста поста через AI...")
+            post_text = await self.ai_service.generate_post_text(
+                prompt=prompt,
+                photos_description=photo_description
+            )
+            
+            logger.info(f"Текст поста сгенерирован (длина: {len(post_text)} символов)")
+            
+            # Применяем очистку и форматирование
+            from services.ai_service import clean_ai_response, markdown_to_html
+            post_text = clean_ai_response(post_text)
+            post_text = markdown_to_html(post_text)
+            
+            # Проверяем длину поста
+            if len(post_text) > 900:
+                logger.warning(f"Пост превышает 900 символов ({len(post_text)}), обрезаем")
+                post_text = post_text[:900] + "..."
             
             return post_text, [photo_path]
             
