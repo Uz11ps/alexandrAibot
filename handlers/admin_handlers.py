@@ -166,8 +166,8 @@ class SchedulePostStates(StatesGroup):
 
 class PostNowStates(StatesGroup):
     """Состояния для функции 'Опубликовать сейчас'"""
-    waiting_for_post_type = State()
     waiting_for_photo = State()
+    waiting_for_prompt = State()
 
 
 def is_admin(user_id: int) -> bool:
@@ -2506,7 +2506,7 @@ async def post_now_select_type(callback: CallbackQuery, state: FSMContext):
 
 @router.message(PostNowStates.waiting_for_photo)
 async def post_now_process_photo(message: Message, state: FSMContext):
-    """Обрабатывает фото и публикует пост"""
+    """Обрабатывает фото и переходит к вводу промпта"""
     if not is_admin(message.from_user.id):
         await message.answer("У вас нет доступа.")
         await safe_clear_state(state)
@@ -2529,14 +2529,6 @@ async def post_now_process_photo(message: Message, state: FSMContext):
         return
     
     try:
-        data = await state.get_data()
-        post_type = data.get('post_type')
-        
-        if not post_type:
-            await message.answer("❌ Ошибка: тип поста не выбран.")
-            await safe_clear_state(state)
-            return
-        
         # Скачиваем фото
         photo = message.photo[-1]
         file_info = await message.bot.get_file(photo.file_id)
@@ -2544,20 +2536,86 @@ async def post_now_process_photo(message: Message, state: FSMContext):
         photo_path.parent.mkdir(parents=True, exist_ok=True)
         await message.bot.download_file(file_info.file_path, destination=str(photo_path))
         
-        # Генерируем пост на основе типа
-        post_text, photos = await dependencies.post_service._generate_post_by_type_for_now(post_type, str(photo_path.absolute()))
+        # Сохраняем путь к фото в состоянии
+        await state.update_data(photo_path=str(photo_path.absolute()))
+        await state.set_state(PostNowStates.waiting_for_prompt)
         
-        if not post_text or "Нет доступных фотографий" in post_text:
-            await message.answer("❌ Ошибка при генерации поста. Попробуйте снова.")
+        await message.answer(
+            "✅ <b>Фотография получена!</b>\n\n"
+            "<b>Шаг 2:</b> Отправьте промпт (описание того, какой пост нужно создать)\n\n"
+            "Например:\n"
+            "• \"Создай отчетный пост о текущих объектах\"\n"
+            "• \"Напиши экспертную статью о земельных вопросах\"\n"
+            "• \"Сделай пост об услугах компании\"\n\n"
+            "Или отправьте 'отмена' для отмены:",
+            parse_mode="HTML"
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка при обработке фото: {e}", exc_info=True)
+        await message.answer(f"❌ Ошибка при обработке фото: {str(e)}")
+        await safe_clear_state(state)
+
+
+@router.message(PostNowStates.waiting_for_prompt)
+async def post_now_process_prompt(message: Message, state: FSMContext):
+    """Обрабатывает промпт и генерирует пост"""
+    if not is_admin(message.from_user.id):
+        await message.answer("У вас нет доступа.")
+        await safe_clear_state(state)
+        return
+    
+    # Проверка на отмену
+    if message.text and message.text.lower().strip() in ['отмена', 'cancel', 'назад']:
+        await safe_clear_state(state)
+        await message.answer("❌ Публикация отменена.", reply_markup=get_main_menu_keyboard())
+        return
+    
+    if not message.text:
+        await message.answer(
+            "❌ <b>Промпт обязателен!</b>\n\n"
+            "Пожалуйста, отправьте текстовое описание того, какой пост нужно создать.\n\n"
+            "Или отправьте 'отмена' для отмены:",
+            parse_mode="HTML"
+        )
+        return
+    
+    try:
+        data = await state.get_data()
+        photo_path = data.get('photo_path')
+        prompt = message.text.strip()
+        
+        if not photo_path:
+            await message.answer("❌ Ошибка: фотография не найдена. Начните заново.")
+            await safe_clear_state(state)
+            return
+        
+        # Отправляем сообщение о генерации
+        loading_msg = await message.answer("⏳ Генерирую пост на основе фото и промпта...")
+        
+        # Генерируем пост на основе фото и промпта
+        post_text, photos = await dependencies.post_service._generate_post_from_photo_and_prompt(
+            photo_path, prompt
+        )
+        
+        # Удаляем сообщение о загрузке
+        try:
+            await loading_msg.delete()
+        except:
+            pass
+        
+        if not post_text or "Ошибка" in post_text:
+            await message.answer(f"❌ Ошибка при генерации поста: {post_text}")
             await safe_clear_state(state)
             return
         
         # Публикуем немедленно
-        results = await dependencies.post_service.publish_approved_post(post_text, [str(photo_path.absolute())])
+        results = await dependencies.post_service.publish_approved_post(post_text, [photo_path])
         
         await message.answer(
             f"✅ <b>Пост опубликован!</b>\n\n"
-            f"Тип: <b>{post_type}</b>\n"
+            f"📝 Промпт: <b>{prompt[:100]}{'...' if len(prompt) > 100 else ''}</b>\n"
+            f"📸 Фото: прикреплено\n\n"
             f"Telegram: {results.get('telegram', 'N/A')}\n"
             f"VK: {results.get('vk', 'N/A')}",
             reply_markup=get_main_menu_keyboard(),
