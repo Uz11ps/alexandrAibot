@@ -2503,19 +2503,63 @@ async def post_now_process_photo(message: Message, state: FSMContext):
         await message.answer("❌ Публикация отменена.", reply_markup=get_main_menu_keyboard())
         return
     
-    # Проверяем наличие фото
-    if not message.photo:
-        logger.warning("Сообщение не содержит фото")
+    # Проверяем наличие фото или видео
+    if not message.photo and not message.video:
+        logger.warning("Сообщение не содержит фото или видео")
         cancel_keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="❌ Отмена", callback_data="post_now_cancel")]
         ])
         await message.answer(
-            "❌ <b>Фотография обязательна!</b>\n\n"
-            "Пожалуйста, прикрепите фотографию к сообщению.",
+            "❌ <b>Фотография или видео обязательны!</b>\n\n"
+            "Пожалуйста, прикрепите фотографию или видео к сообщению.",
             reply_markup=cancel_keyboard,
             parse_mode="HTML"
         )
         return
+    
+    # Обрабатываем видео
+    if message.video:
+        try:
+            logger.info("Начинаем обработку видео")
+            video = message.video
+            file_info = await message.bot.get_file(video.file_id)
+            video_path = dependencies.file_service.get_folder_path('photos') / f"{video.file_id}.mp4"
+            video_path.parent.mkdir(parents=True, exist_ok=True)
+            await message.bot.download_file(file_info.file_path, destination=str(video_path))
+            logger.info(f"Видео скачано: {video_path.absolute()}")
+            
+            # Сохраняем путь к видео в состоянии
+            await state.update_data(
+                video_path=str(video_path.absolute()),
+                video_paths=[str(video_path.absolute())],
+                has_video=True
+            )
+            logger.info(f"Путь к видео сохранен в состоянии: {video_path.absolute()}")
+            
+            # Устанавливаем состояние ожидания промпта
+            await state.set_state(PostNowStates.waiting_for_prompt)
+            
+            cancel_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="❌ Отмена", callback_data="post_now_cancel")]
+            ])
+            
+            await message.answer(
+                "✅ <b>Видео получено!</b>\n\n"
+                "<b>Шаг 2:</b> Отправьте промпт (описание того, какой пост нужно создать)\n\n"
+                "Например:\n"
+                "• \"Создай отчетный пост о текущих объектах\"\n"
+                "• \"Напиши экспертную статью о земельных вопросах\"\n"
+                "• \"Сделай пост об услугах компании\"",
+                reply_markup=cancel_keyboard,
+                parse_mode="HTML"
+            )
+            logger.info("Сообщение с запросом промпта отправлено пользователю")
+            return
+        except Exception as e:
+            logger.error(f"Ошибка при обработке видео: {e}", exc_info=True)
+            await message.answer(f"❌ Ошибка при обработке видео: {str(e)}")
+            await safe_clear_state(state)
+            return
     
     try:
         logger.info("Начинаем обработку фото")
