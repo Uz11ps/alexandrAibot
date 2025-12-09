@@ -540,6 +540,44 @@ class AIService:
             file_name = Path(photo_path).name
             # Возвращаем более информативное описание
             return f"Фотография со строительного объекта: {file_name}. На фотографии запечатлен текущий этап работ на объекте компании «Археон»."
+    
+    async def analyze_multiple_photos(self, photo_paths: List[str]) -> str:
+        """
+        Анализирует несколько фотографий и возвращает объединенное описание
+        
+        Args:
+            photo_paths: Список путей к файлам фотографий
+            
+        Returns:
+            Объединенное описание содержимого всех фотографий
+        """
+        if not photo_paths:
+            return "Фотографии не предоставлены."
+        
+        if len(photo_paths) == 1:
+            # Если одна фотография, используем обычный метод анализа
+            return await self.analyze_photo(photo_paths[0])
+        
+        logger.info(f"Начинаем анализ {len(photo_paths)} фотографий")
+        
+        # Анализируем каждую фотографию отдельно
+        descriptions = []
+        for i, photo_path in enumerate(photo_paths, 1):
+            try:
+                logger.info(f"Анализ фотографии {i}/{len(photo_paths)}: {photo_path}")
+                description = await self.analyze_photo(photo_path)
+                descriptions.append(f"Фотография {i}: {description}")
+            except Exception as e:
+                logger.error(f"Ошибка при анализе фотографии {i}: {e}")
+                from pathlib import Path
+                file_name = Path(photo_path).name
+                descriptions.append(f"Фотография {i}: Фотография со строительного объекта: {file_name}. [Ошибка при анализе: {str(e)}]")
+        
+        # Объединяем описания
+        combined_description = "\n\n".join(descriptions)
+        logger.info(f"Анализ всех фотографий завершен. Общая длина описания: {len(combined_description)} символов")
+        
+        return combined_description
         
         except Exception as e:
             error_str = str(e)

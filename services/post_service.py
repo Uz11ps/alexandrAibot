@@ -408,12 +408,12 @@ class PostService:
             logger.error(f"Ошибка при публикации поста: {e}")
             raise
     
-    async def _generate_post_from_photo_and_prompt(self, photo_path: str, user_prompt: str) -> tuple[str, List[str]]:
+    async def _generate_post_from_photo_and_prompt(self, photo_paths: List[str], user_prompt: str) -> tuple[str, List[str]]:
         """
-        Генерирует пост для функции 'Опубликовать сейчас' на основе фото и промпта от пользователя
+        Генерирует пост для функции 'Опубликовать сейчас' на основе фото (одного или нескольких) и промпта от пользователя
         
         Args:
-            photo_path: Путь к фотографии
+            photo_paths: Список путей к фотографиям (может быть один или несколько)
             user_prompt: Промпт от пользователя (описание того, какой пост нужно создать)
             
         Returns:
@@ -422,23 +422,35 @@ class PostService:
         try:
             logger.info(f"Начало генерации поста для 'Опубликовать сейчас'")
             logger.info(f"Промпт пользователя: {user_prompt}")
-            logger.info(f"Путь к фото: {photo_path}")
+            logger.info(f"Количество фото: {len(photo_paths)}")
             
-            # Проверяем существование файла
+            # Проверяем существование файлов
             from pathlib import Path
-            photo_file = Path(photo_path)
-            if not photo_file.exists():
-                logger.error(f"Файл фото не найден: {photo_path}")
-                return f"Ошибка: файл фотографии не найден: {photo_path}", []
+            valid_photo_paths = []
+            for photo_path in photo_paths:
+                photo_file = Path(photo_path)
+                if photo_file.exists():
+                    valid_photo_paths.append(photo_path)
+                else:
+                    logger.warning(f"Файл фото не найден: {photo_path}")
             
-            # Анализируем фото через AI
-            logger.info(f"Анализ фотографии через AI...")
-            photo_description = await self.ai_service.analyze_photo(photo_path)
+            if not valid_photo_paths:
+                return f"Ошибка: ни один файл фотографии не найден", []
+            
+            # Анализируем фото через AI (одно или несколько)
+            logger.info(f"Анализ {len(valid_photo_paths)} фотографий через AI...")
+            if len(valid_photo_paths) == 1:
+                photo_description = await self.ai_service.analyze_photo(valid_photo_paths[0])
+            else:
+                photo_description = await self.ai_service.analyze_multiple_photos(valid_photo_paths)
             logger.info(f"Описание фото получено: {photo_description[:100]}...")
             
             # Формируем промпт для генерации поста
             # Используем пользовательский промпт как основной запрос, а описание фото как контекст
-            prompt = f"{user_prompt}\n\nИспользуй информацию из фотографии для создания поста."
+            if len(valid_photo_paths) > 1:
+                prompt = f"{user_prompt}\n\nИспользуй информацию из всех предоставленных фотографий для создания поста. Учти разные ракурсы и детали с каждой фотографии."
+            else:
+                prompt = f"{user_prompt}\n\nИспользуй информацию из фотографии для создания поста."
             
             # Генерируем текст поста, передавая описание фото как photos_description
             logger.info("Генерация текста поста через AI...")
@@ -459,7 +471,7 @@ class PostService:
                 logger.warning(f"Пост превышает 900 символов ({len(post_text)}), обрезаем")
                 post_text = post_text[:900] + "..."
             
-            return post_text, [photo_path]
+            return post_text, valid_photo_paths
             
         except Exception as e:
             logger.error(f"Ошибка при генерации поста для 'Опубликовать сейчас': {e}", exc_info=True)

@@ -2468,9 +2468,10 @@ async def post_now_start(callback: CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="❌ Отмена", callback_data="post_now_cancel")]
     ])
     
-    await callback.message.answer(
+        await callback.message.answer(
         "🚀 <b>Опубликовать сейчас</b>\n\n"
-        "<b>Шаг 1:</b> Прикрепите фотографию к сообщению",
+        "<b>Шаг 1:</b> Прикрепите одну или несколько фотографий к сообщению\n\n"
+        "💡 <i>Совет: Вы можете отправить альбом из нескольких фото для более полного описания объекта</i>",
         reply_markup=cancel_keyboard,
         parse_mode="HTML"
     )
@@ -2518,17 +2519,72 @@ async def post_now_process_photo(message: Message, state: FSMContext):
     
     try:
         logger.info("Начинаем обработку фото")
-        # Скачиваем фото
-        photo = message.photo[-1]
-        file_info = await message.bot.get_file(photo.file_id)
-        photo_path = dependencies.file_service.get_folder_path('photos') / f"{photo.file_id}.jpg"
-        photo_path.parent.mkdir(parents=True, exist_ok=True)
-        await message.bot.download_file(file_info.file_path, destination=str(photo_path))
-        logger.info(f"Фото скачано: {photo_path.absolute()}")
         
-        # Сохраняем путь к фото в состоянии
-        await state.update_data(photo_path=str(photo_path.absolute()))
-        logger.info(f"Путь к фото сохранен в состоянии: {photo_path.absolute()}")
+        # Проверяем, является ли это частью альбома
+        media_group_id = message.media_group_id
+        if media_group_id:
+            # Это альбом - сохраняем информацию о медиагруппе
+            data = await state.get_data()
+            album_photos = data.get('album_photos', [])
+            album_media_group_id = data.get('album_media_group_id')
+            
+            # Если это новая медиагруппа или первое фото в группе
+            if album_media_group_id != media_group_id:
+                album_photos = []
+                album_media_group_id = media_group_id
+            
+            # Скачиваем текущее фото
+            photo = message.photo[-1]
+            file_info = await message.bot.get_file(photo.file_id)
+            photo_path = dependencies.file_service.get_folder_path('photos') / f"{photo.file_id}.jpg"
+            photo_path.parent.mkdir(parents=True, exist_ok=True)
+            await message.bot.download_file(file_info.file_path, destination=str(photo_path))
+            logger.info(f"Фото из альбома скачано: {photo_path.absolute()}")
+            
+            # Добавляем фото в альбом
+            album_photos.append(str(photo_path.absolute()))
+            
+            # Сохраняем обновленный альбом в состоянии
+            await state.update_data(
+                album_photos=album_photos,
+                album_media_group_id=album_media_group_id
+            )
+            logger.info(f"Фото добавлено в альбом. Всего фото в альбоме: {len(album_photos)}")
+            
+            # Если это не последнее фото в альбоме, ждем остальные
+            # (Telegram отправляет альбом несколькими сообщениями)
+            # Отправляем подтверждение получения фото
+            await message.answer(f"✅ Получено фото {len(album_photos)} из альбома. Ожидаю остальные фото...")
+            return
+        
+        # Одиночное фото или последнее фото в альбоме
+        data = await state.get_data()
+        album_photos = data.get('album_photos', [])
+        
+        if album_photos:
+            # Если были фото из альбома, добавляем текущее
+            photo = message.photo[-1]
+            file_info = await message.bot.get_file(photo.file_id)
+            photo_path = dependencies.file_service.get_folder_path('photos') / f"{photo.file_id}.jpg"
+            photo_path.parent.mkdir(parents=True, exist_ok=True)
+            await message.bot.download_file(file_info.file_path, destination=str(photo_path))
+            album_photos.append(str(photo_path.absolute()))
+            
+            # Сохраняем все фото как список
+            await state.update_data(photo_paths=album_photos)
+            logger.info(f"Альбом завершен. Всего фото: {len(album_photos)}")
+        else:
+            # Одиночное фото
+            photo = message.photo[-1]
+            file_info = await message.bot.get_file(photo.file_id)
+            photo_path = dependencies.file_service.get_folder_path('photos') / f"{photo.file_id}.jpg"
+            photo_path.parent.mkdir(parents=True, exist_ok=True)
+            await message.bot.download_file(file_info.file_path, destination=str(photo_path))
+            logger.info(f"Фото скачано: {photo_path.absolute()}")
+            
+            # Сохраняем путь к фото в состоянии (для обратной совместимости)
+            await state.update_data(photo_path=str(photo_path.absolute()), photo_paths=[str(photo_path.absolute())])
+            logger.info(f"Путь к фото сохранен в состоянии: {photo_path.absolute()}")
         
         # Устанавливаем состояние ожидания промпта
         await state.set_state(PostNowStates.waiting_for_prompt)
@@ -2539,8 +2595,14 @@ async def post_now_process_photo(message: Message, state: FSMContext):
             [InlineKeyboardButton(text="❌ Отмена", callback_data="post_now_cancel")]
         ])
         
+        # Определяем количество фото для сообщения
+        data = await state.get_data()
+        photo_paths = data.get('photo_paths', [])
+        photo_count = len(photo_paths) if photo_paths else 1
+        
+        photo_text = "фотография" if photo_count == 1 else f"{photo_count} фотографий"
         await message.answer(
-            "✅ <b>Фотография получена!</b>\n\n"
+            f"✅ <b>{photo_text.capitalize()} получена!</b>\n\n"
             "<b>Шаг 2:</b> Отправьте промпт (описание того, какой пост нужно создать)\n\n"
             "Например:\n"
             "• \"Создай отчетный пост о текущих объектах\"\n"
@@ -2598,20 +2660,28 @@ async def post_now_process_prompt(message: Message, state: FSMContext):
     
     try:
         data = await state.get_data()
-        photo_path = data.get('photo_path')
-        prompt = message.text.strip()
+        # Поддерживаем как старый формат (одно фото), так и новый (несколько фото)
+        photo_paths = data.get('photo_paths', [])
+        photo_path = data.get('photo_path')  # Для обратной совместимости
         
-        if not photo_path:
-            await message.answer("❌ Ошибка: фотография не найдена. Начните заново.")
+        # Если есть список фото, используем его, иначе используем одно фото
+        if not photo_paths and photo_path:
+            photo_paths = [photo_path]
+        
+        if not photo_paths:
+            await message.answer("❌ Ошибка: фотографии не найдены. Начните заново.")
             await safe_clear_state(state)
             return
         
+        prompt = message.text.strip()
+        
         # Отправляем сообщение о генерации
-        loading_msg = await message.answer("⏳ Генерирую пост на основе фото и промпта...")
+        photo_count_text = f"{len(photo_paths)} фотографий" if len(photo_paths) > 1 else "фото"
+        loading_msg = await message.answer(f"⏳ Генерирую пост на основе {photo_count_text} и промпта...")
         
         # Генерируем пост на основе фото и промпта
         post_text, photos = await dependencies.post_service._generate_post_from_photo_and_prompt(
-            photo_path, prompt
+            photo_paths, prompt
         )
         
         # Удаляем сообщение о загрузке
@@ -2631,12 +2701,16 @@ async def post_now_process_prompt(message: Message, state: FSMContext):
             return
         
         # Сохраняем сгенерированный пост в состоянии для одобрения
-        await state.update_data(generated_post_text=post_text, generated_photo_path=photo_path)
+        await state.update_data(
+            generated_post_text=post_text,
+            generated_photo_paths=photos,  # Сохраняем список фото
+            generated_photo_path=photos[0] if photos else None  # Для обратной совместимости
+        )
         await state.set_state(PostNowStates.waiting_for_approval)
         
         # Отправляем пост на согласование
         # Сохраняем фото для черновика
-        dependencies.telegram_service._draft_photos[message.message_id] = [photo_path]
+        dependencies.telegram_service._draft_photos[message.message_id] = photos.copy()
         
         # Отправляем пост с кнопками одобрения/редактирования
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -2652,28 +2726,94 @@ async def post_now_process_prompt(message: Message, state: FSMContext):
         # Отправляем фото с текстом поста
         try:
             from pathlib import Path
-            photo_file = Path(photo_path)
-            if photo_file.exists():
-                with open(photo_path, 'rb') as photo:
-                    sent_message = await message.answer_photo(
-                        photo=photo,
-                        caption=f"📝 <b>Черновик поста для согласования:</b>\n\n{post_text}",
+            from aiogram.types import InputMediaPhoto
+            
+            MAX_CAPTION_LENGTH = 1024
+            header = "📝 <b>Черновик поста для согласования:</b>\n\n"
+            full_text = f"{header}{post_text}"
+            
+            if len(photos) == 1:
+                # Одно фото
+                photo_file = Path(photos[0])
+                if photo_file.exists():
+                    with open(photos[0], 'rb') as photo:
+                        if len(full_text) <= MAX_CAPTION_LENGTH:
+                            sent_message = await message.answer_photo(
+                                photo=photo,
+                                caption=full_text,
+                                reply_markup=keyboard,
+                                parse_mode="HTML"
+                            )
+                        else:
+                            # Текст слишком длинный - отправляем фото с коротким caption и текст отдельно
+                            photo.seek(0)
+                            photo_message = await message.answer_photo(
+                                photo=photo,
+                                caption=f"{header}📝 Полный текст ниже ⬇️",
+                                parse_mode="HTML"
+                            )
+                            sent_message = await message.answer(
+                                text=full_text,
+                                reply_markup=keyboard,
+                                parse_mode="HTML"
+                            )
+                            dependencies.telegram_service._draft_photos[sent_message.message_id] = photos.copy()
+                        dependencies.telegram_service._draft_photos[sent_message.message_id] = photos.copy()
+                else:
+                    # Если фото не найдено, отправляем только текст
+                    sent_message = await message.answer(
+                        f"📝 <b>Черновик поста для согласования:</b>\n\n{post_text}",
                         reply_markup=keyboard,
                         parse_mode="HTML"
                     )
-                    # Сохраняем ID сообщения для дальнейшей работы
-                    dependencies.telegram_service._draft_photos[sent_message.message_id] = [photo_path]
             else:
-                # Если фото не найдено, отправляем только текст
-                await message.answer(
-                    f"📝 <b>Черновик поста для согласования:</b>\n\n{post_text}",
-                    reply_markup=keyboard,
-                    parse_mode="HTML"
-                )
+                # Несколько фото - используем медиагруппу
+                media = []
+                for i, photo_path in enumerate(photos):
+                    photo_file = Path(photo_path)
+                    if photo_file.exists():
+                        with open(photo_path, 'rb') as photo_data:
+                            if i == 0 and len(full_text) <= MAX_CAPTION_LENGTH:
+                                # Первое фото с полным текстом в caption
+                                media.append(InputMediaPhoto(
+                                    media=photo_data,
+                                    caption=full_text,
+                                    parse_mode="HTML"
+                                ))
+                            else:
+                                # Остальные фото без caption или с коротким
+                                photo_data.seek(0)
+                                media.append(InputMediaPhoto(media=photo_data))
+                
+                if media:
+                    sent_messages = await message.answer_media_group(media=media)
+                    # Отправляем текст отдельным сообщением с кнопками, если он не поместился в caption
+                    if len(full_text) > MAX_CAPTION_LENGTH:
+                        sent_message = await message.answer(
+                            text=full_text,
+                            reply_markup=keyboard,
+                            parse_mode="HTML"
+                        )
+                        dependencies.telegram_service._draft_photos[sent_message.message_id] = photos.copy()
+                    else:
+                        # Если текст поместился в caption первого фото, отправляем кнопки отдельным сообщением
+                        sent_message = await message.answer(
+                            text="Выберите действие:",
+                            reply_markup=keyboard,
+                            parse_mode="HTML"
+                        )
+                        dependencies.telegram_service._draft_photos[sent_message.message_id] = photos.copy()
+                else:
+                    # Если ни одно фото не найдено, отправляем только текст
+                    sent_message = await message.answer(
+                        f"📝 <b>Черновик поста для согласования:</b>\n\n{post_text}",
+                        reply_markup=keyboard,
+                        parse_mode="HTML"
+                    )
         except Exception as e:
             logger.error(f"Ошибка при отправке фото: {e}", exc_info=True)
             # Fallback: отправляем только текст
-            await message.answer(
+            sent_message = await message.answer(
                 f"📝 <b>Черновик поста для согласования:</b>\n\n{post_text}",
                 reply_markup=keyboard,
                 parse_mode="HTML"
@@ -2697,7 +2837,8 @@ async def post_now_approve(callback: CallbackQuery, state: FSMContext):
     try:
         data = await state.get_data()
         post_text = data.get('generated_post_text')
-        photo_path = data.get('generated_photo_path')
+        photo_paths = data.get('generated_photo_paths', [])
+        photo_path = data.get('generated_photo_path')  # Для обратной совместимости
         
         if not post_text:
             # Пытаемся получить текст из сообщения
@@ -2714,8 +2855,12 @@ async def post_now_approve(callback: CallbackQuery, state: FSMContext):
         
         # Получаем фото из сохраненных путей или из состояния
         photos = dependencies.telegram_service.get_draft_photos(callback.message.message_id)
-        if not photos and photo_path:
-            photos = [photo_path]
+        if not photos:
+            # Используем фото из состояния
+            if photo_paths:
+                photos = photo_paths
+            elif photo_path:
+                photos = [photo_path]
         
         if not photos:
             # Пытаемся скачать из сообщения
@@ -2886,13 +3031,17 @@ async def process_edits(message: Message, state: FSMContext):
                 reply_markup=get_main_menu_keyboard(),
                 parse_mode="HTML"
             )
-        elif original_photo_path:
+        elif original_photo_paths:
             # Это функция "Опубликовать сейчас" - отправляем на повторное согласование
-            await state.update_data(generated_post_text=refined_post, generated_photo_path=original_photo_path)
+            await state.update_data(
+                generated_post_text=refined_post,
+                generated_photo_paths=original_photo_paths,
+                generated_photo_path=original_photo_paths[0] if original_photo_paths else None
+            )
             await state.set_state(PostNowStates.waiting_for_approval)
             
             # Сохраняем фото для черновика
-            dependencies.telegram_service._draft_photos[message.message_id] = [original_photo_path]
+            dependencies.telegram_service._draft_photos[message.message_id] = original_photo_paths.copy()
             
             # Отправляем переработанный пост на согласование
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -2907,22 +3056,83 @@ async def process_edits(message: Message, state: FSMContext):
             
             try:
                 from pathlib import Path
-                photo_file = Path(original_photo_path)
-                if photo_file.exists():
-                    with open(original_photo_path, 'rb') as photo:
-                        sent_message = await message.answer_photo(
-                            photo=photo,
-                            caption=f"📝 <b>Черновик поста для согласования (после правок):</b>\n\n{refined_post}",
+                from aiogram.types import InputMediaPhoto
+                
+                MAX_CAPTION_LENGTH = 1024
+                header = "📝 <b>Черновик поста для согласования (после правок):</b>\n\n"
+                full_text = f"{header}{refined_post}"
+                
+                if len(original_photo_paths) == 1:
+                    # Одно фото
+                    photo_file = Path(original_photo_paths[0])
+                    if photo_file.exists():
+                        with open(original_photo_paths[0], 'rb') as photo:
+                            if len(full_text) <= MAX_CAPTION_LENGTH:
+                                sent_message = await message.answer_photo(
+                                    photo=photo,
+                                    caption=full_text,
+                                    reply_markup=keyboard,
+                                    parse_mode="HTML"
+                                )
+                            else:
+                                photo.seek(0)
+                                photo_message = await message.answer_photo(
+                                    photo=photo,
+                                    caption=f"{header}📝 Полный текст ниже ⬇️",
+                                    parse_mode="HTML"
+                                )
+                                sent_message = await message.answer(
+                                    text=full_text,
+                                    reply_markup=keyboard,
+                                    parse_mode="HTML"
+                                )
+                                dependencies.telegram_service._draft_photos[sent_message.message_id] = original_photo_paths.copy()
+                            dependencies.telegram_service._draft_photos[sent_message.message_id] = original_photo_paths.copy()
+                    else:
+                        await message.answer(
+                            f"📝 <b>Черновик поста для согласования (после правок):</b>\n\n{refined_post}",
                             reply_markup=keyboard,
                             parse_mode="HTML"
                         )
-                        dependencies.telegram_service._draft_photos[sent_message.message_id] = [original_photo_path]
                 else:
-                    await message.answer(
-                        f"📝 <b>Черновик поста для согласования (после правок):</b>\n\n{refined_post}",
-                        reply_markup=keyboard,
-                        parse_mode="HTML"
-                    )
+                    # Несколько фото - используем медиагруппу
+                    media = []
+                    for i, photo_path in enumerate(original_photo_paths):
+                        photo_file = Path(photo_path)
+                        if photo_file.exists():
+                            with open(photo_path, 'rb') as photo_data:
+                                if i == 0 and len(full_text) <= MAX_CAPTION_LENGTH:
+                                    media.append(InputMediaPhoto(
+                                        media=photo_data,
+                                        caption=full_text,
+                                        parse_mode="HTML"
+                                    ))
+                                else:
+                                    photo_data.seek(0)
+                                    media.append(InputMediaPhoto(media=photo_data))
+                    
+                    if media:
+                        sent_messages = await message.answer_media_group(media=media)
+                        if len(full_text) > MAX_CAPTION_LENGTH:
+                            sent_message = await message.answer(
+                                text=full_text,
+                                reply_markup=keyboard,
+                                parse_mode="HTML"
+                            )
+                            dependencies.telegram_service._draft_photos[sent_message.message_id] = original_photo_paths.copy()
+                        else:
+                            sent_message = await message.answer(
+                                text="Выберите действие:",
+                                reply_markup=keyboard,
+                                parse_mode="HTML"
+                            )
+                            dependencies.telegram_service._draft_photos[sent_message.message_id] = original_photo_paths.copy()
+                    else:
+                        await message.answer(
+                            f"📝 <b>Черновик поста для согласования (после правок):</b>\n\n{refined_post}",
+                            reply_markup=keyboard,
+                            parse_mode="HTML"
+                        )
             except Exception as e:
                 logger.error(f"Ошибка при отправке фото: {e}", exc_info=True)
                 await message.answer(
