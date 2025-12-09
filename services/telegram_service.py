@@ -15,6 +15,7 @@ class TelegramService:
         self.bot = bot
         self.admin_id = settings.TELEGRAM_ADMIN_ID
         self.channel_id = settings.TELEGRAM_CHANNEL_ID
+        self._draft_photos = {}  # Словарь для хранения путей к фотографиям черновиков
     
     async def send_draft_for_approval(
         self,
@@ -86,8 +87,6 @@ class TelegramService:
                     )
                     
                     # Сохраняем фотографии для текстового сообщения (оно содержит кнопки)
-                    if not hasattr(self, '_draft_photos'):
-                        self._draft_photos = {}
                     self._draft_photos[message.message_id] = photos.copy()
                     logger.info(f"Сохранены пути к фотографиям для текстового сообщения {message.message_id}: {photos}")
             else:
@@ -105,8 +104,6 @@ class TelegramService:
             # Используем message_id как ключ для хранения фотографий
             if photos and len(photos) > 0:
                 # Сохраняем в атрибуте класса для доступа из обработчиков
-                if not hasattr(self, '_draft_photos'):
-                    self._draft_photos = {}
                 self._draft_photos[message.message_id] = photos.copy()
                 logger.info(f"Сохранены пути к фотографиям для сообщения {message.message_id}: {photos}")
             

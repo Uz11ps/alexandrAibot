@@ -2463,10 +2463,15 @@ async def post_now_start(callback: CallbackQuery, state: FSMContext):
         logger.error(f"❌ КРИТИЧЕСКАЯ ОШИБКА: Состояние не установлено правильно! Ожидалось: PostNowStates.waiting_for_photo, получено: {new_state}")
     
     await safe_answer_callback(callback)
+    
+    cancel_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="post_now_cancel")]
+    ])
+    
     await callback.message.answer(
         "🚀 <b>Опубликовать сейчас</b>\n\n"
-        "<b>Шаг 1:</b> Прикрепите фотографию к сообщению\n\n"
-        "Или отправьте 'отмена' для отмены:",
+        "<b>Шаг 1:</b> Прикрепите фотографию к сообщению",
+        reply_markup=cancel_keyboard,
         parse_mode="HTML"
     )
     logger.info(f"🔴 Сообщение с запросом фото отправлено пользователю {callback.from_user.id}")
@@ -2500,10 +2505,13 @@ async def post_now_process_photo(message: Message, state: FSMContext):
     # Проверяем наличие фото
     if not message.photo:
         logger.warning("Сообщение не содержит фото")
+        cancel_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="post_now_cancel")]
+        ])
         await message.answer(
             "❌ <b>Фотография обязательна!</b>\n\n"
-            "Пожалуйста, прикрепите фотографию к сообщению.\n\n"
-            "Или отправьте 'отмена' для отмены:",
+            "Пожалуйста, прикрепите фотографию к сообщению.",
+            reply_markup=cancel_keyboard,
             parse_mode="HTML"
         )
         return
@@ -2527,14 +2535,18 @@ async def post_now_process_photo(message: Message, state: FSMContext):
         new_state = await state.get_state()
         logger.info(f"Состояние изменено на: {new_state}")
         
+        cancel_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="post_now_cancel")]
+        ])
+        
         await message.answer(
             "✅ <b>Фотография получена!</b>\n\n"
             "<b>Шаг 2:</b> Отправьте промпт (описание того, какой пост нужно создать)\n\n"
             "Например:\n"
             "• \"Создай отчетный пост о текущих объектах\"\n"
             "• \"Напиши экспертную статью о земельных вопросах\"\n"
-            "• \"Сделай пост об услугах компании\"\n\n"
-            "Или отправьте 'отмена' для отмены:",
+            "• \"Сделай пост об услугах компании\"",
+            reply_markup=cancel_keyboard,
             parse_mode="HTML"
         )
         logger.info("Сообщение с запросом промпта отправлено пользователю")
@@ -2573,10 +2585,13 @@ async def post_now_process_prompt(message: Message, state: FSMContext):
         return
     
     if not message.text:
+        cancel_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="post_now_cancel")]
+        ])
         await message.answer(
             "❌ <b>Промпт обязателен!</b>\n\n"
-            "Пожалуйста, отправьте текстовое описание того, какой пост нужно создать.\n\n"
-            "Или отправьте 'отмена' для отмены:",
+            "Пожалуйста, отправьте текстовое описание того, какой пост нужно создать.",
+            reply_markup=cancel_keyboard,
             parse_mode="HTML"
         )
         return
