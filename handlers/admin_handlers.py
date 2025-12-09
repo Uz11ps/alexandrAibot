@@ -2567,22 +2567,29 @@ async def post_now_process_photo(message: Message, state: FSMContext):
         # Проверяем, является ли это частью альбома
         media_group_id = message.media_group_id
         if media_group_id:
+            # Глобальный словарь для хранения активных задач обработки альбомов
+            # Ключ: (user_id, media_group_id), значение: asyncio.Task
+            if not hasattr(post_now_process_photo, '_album_tasks'):
+                post_now_process_photo._album_tasks = {}
+            
             # Это альбом - сохраняем информацию о медиагруппе
             data = await state.get_data()
             album_photos = data.get('album_photos', [])
             album_media_group_id = data.get('album_media_group_id')
-            album_processing_task = data.get('album_processing_task')
+            
+            task_key = (message.from_user.id, media_group_id)
             
             # Если это новая медиагруппа или первое фото в группе
             if album_media_group_id != media_group_id:
                 album_photos = []
                 album_media_group_id = media_group_id
-                # Отменяем предыдущую задачу обработки, если она есть
-                if album_processing_task:
+                # Отменяем предыдущую задачу обработки для этого пользователя и media_group_id, если она есть
+                if task_key in post_now_process_photo._album_tasks:
                     try:
-                        album_processing_task.cancel()
+                        post_now_process_photo._album_tasks[task_key].cancel()
                     except:
                         pass
+                    del post_now_process_photo._album_tasks[task_key]
             
             # Скачиваем текущее фото
             photo = message.photo[-1]
@@ -2618,10 +2625,13 @@ async def post_now_process_photo(message: Message, state: FSMContext):
                 
                 # Если альбом не изменился (то же количество фото и тот же media_group_id), завершаем обработку
                 if (len(current_album_photos) == len(album_photos) and 
-                    current_media_group_id == album_media_group_id and
-                    current_album_photos == album_photos):
+                    current_media_group_id == album_media_group_id):
                     
                     logger.info(f"Альбом завершен. Всего фото: {len(current_album_photos)}")
+                    
+                    # Удаляем задачу из словаря
+                    if task_key in post_now_process_photo._album_tasks:
+                        del post_now_process_photo._album_tasks[task_key]
                     
                     # Сохраняем все фото как список
                     await state.update_data(
@@ -2649,10 +2659,17 @@ async def post_now_process_photo(message: Message, state: FSMContext):
                     )
                     logger.info("Сообщение с запросом промпта отправлено пользователю")
             
+            # Отменяем предыдущую задачу для этого альбома, если она есть
+            if task_key in post_now_process_photo._album_tasks:
+                try:
+                    post_now_process_photo._album_tasks[task_key].cancel()
+                except:
+                    pass
+            
             # Создаем и сохраняем задачу обработки альбома
             import asyncio
             task = asyncio.create_task(process_album_after_delay())
-            await state.update_data(album_processing_task=task)
+            post_now_process_photo._album_tasks[task_key] = task
             
             return
         
