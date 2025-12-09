@@ -2462,9 +2462,14 @@ async def post_now_start(callback: CallbackQuery, state: FSMContext):
 @router.message(PostNowStates.waiting_for_photo)
 async def post_now_process_photo(message: Message, state: FSMContext):
     """Обрабатывает фото и переходит к вводу промпта"""
-    logger.info(f"Обработчик post_now_process_photo вызван для пользователя {message.from_user.id}")
+    logger.info(f"🔵 Обработчик post_now_process_photo вызван для пользователя {message.from_user.id}")
     current_state = await state.get_state()
-    logger.info(f"Текущее состояние FSM: {current_state}")
+    logger.info(f"🔵 Текущее состояние FSM: {current_state}")
+    
+    # Дополнительная проверка состояния
+    if current_state != PostNowStates.waiting_for_photo:
+        logger.warning(f"⚠️ Состояние не соответствует ожидаемому! Ожидалось: PostNowStates.waiting_for_photo, получено: {current_state}")
+        return
     
     if not is_admin(message.from_user.id):
         logger.warning(f"Пользователь {message.from_user.id} не является администратором")
