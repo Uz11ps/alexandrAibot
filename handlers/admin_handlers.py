@@ -2590,6 +2590,8 @@ async def post_now_process_photo(message: Message, state: FSMContext):
                     except:
                         pass
                     del post_now_process_photo._album_tasks[task_key]
+                # Сбрасываем флаг отправки сообщения для нового альбома
+                await state.update_data(album_message_sent=False)
             
             # Скачиваем текущее фото
             photo = message.photo[-1]
