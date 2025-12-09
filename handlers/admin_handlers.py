@@ -296,6 +296,64 @@ async def menu_status(callback: CallbackQuery):
     await safe_answer_callback(callback)
 
 
+@router.callback_query(F.data == "test_notifications")
+async def test_notifications(callback: CallbackQuery):
+    """Тестовая отправка уведомлений всем администраторам"""
+    if not is_admin(callback.from_user.id):
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
+        return
+    
+    await safe_answer_callback(callback, "Отправляю тестовые уведомления...")
+    
+    # Получаем список всех администраторов
+    admin_ids = [settings.TELEGRAM_ADMIN_ID]
+    if settings.TELEGRAM_ADMIN_IDS:
+        admin_ids_list = [int(id.strip()) for id in settings.TELEGRAM_ADMIN_IDS.split(',') if id.strip()]
+        admin_ids.extend(admin_ids_list)
+    
+    # Отправляем тестовое уведомление каждому администратору
+    success_count = 0
+    failed_ids = []
+    
+    test_message = (
+        "🧪 <b>Тестовое уведомление</b>\n\n"
+        "Это тестовое сообщение для проверки отправки уведомлений всем администраторам.\n\n"
+        "Если вы получили это сообщение, значит система уведомлений работает корректно! ✅"
+    )
+    
+    for admin_id in admin_ids:
+        try:
+            await callback.message.bot.send_message(
+                chat_id=admin_id,
+                text=test_message,
+                parse_mode="HTML"
+            )
+            success_count += 1
+            logger.info(f"Тестовое уведомление отправлено администратору {admin_id}")
+        except Exception as e:
+            failed_ids.append((admin_id, str(e)))
+            logger.error(f"Ошибка при отправке тестового уведомления администратору {admin_id}: {e}")
+    
+    # Отправляем отчет о результатах
+    result_text = (
+        f"📊 <b>Результаты теста уведомлений</b>\n\n"
+        f"✅ Успешно отправлено: <b>{success_count}</b> из {len(admin_ids)}\n"
+    )
+    
+    if failed_ids:
+        result_text += f"\n❌ Ошибки:\n"
+        for admin_id, error in failed_ids:
+            result_text += f"  • <code>{admin_id}</code>: {error[:50]}...\n"
+    else:
+        result_text += "\n✅ Все уведомления успешно доставлены!"
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="◀️ Назад к статусу", callback_data="menu_status")]
+    ])
+    
+    await callback.message.answer(result_text, reply_markup=keyboard, parse_mode="HTML")
+
+
 @router.callback_query(F.data == "menu_upload")
 async def menu_upload(callback: CallbackQuery):
     """Меню загрузки файлов"""
