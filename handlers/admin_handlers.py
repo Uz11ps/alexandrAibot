@@ -2462,19 +2462,26 @@ async def post_now_start(callback: CallbackQuery, state: FSMContext):
 @router.message(PostNowStates.waiting_for_photo)
 async def post_now_process_photo(message: Message, state: FSMContext):
     """Обрабатывает фото и переходит к вводу промпта"""
+    logger.info(f"Обработчик post_now_process_photo вызван для пользователя {message.from_user.id}")
+    current_state = await state.get_state()
+    logger.info(f"Текущее состояние FSM: {current_state}")
+    
     if not is_admin(message.from_user.id):
+        logger.warning(f"Пользователь {message.from_user.id} не является администратором")
         await message.answer("У вас нет доступа.")
         await safe_clear_state(state)
         return
     
     # Проверка на отмену
     if message.text and message.text.lower().strip() in ['отмена', 'cancel', 'назад']:
+        logger.info("Пользователь отменил публикацию")
         await safe_clear_state(state)
         await message.answer("❌ Публикация отменена.", reply_markup=get_main_menu_keyboard())
         return
     
     # Проверяем наличие фото
     if not message.photo:
+        logger.warning("Сообщение не содержит фото")
         await message.answer(
             "❌ <b>Фотография обязательна!</b>\n\n"
             "Пожалуйста, прикрепите фотографию к сообщению.\n\n"
@@ -2484,16 +2491,23 @@ async def post_now_process_photo(message: Message, state: FSMContext):
         return
     
     try:
+        logger.info("Начинаем обработку фото")
         # Скачиваем фото
         photo = message.photo[-1]
         file_info = await message.bot.get_file(photo.file_id)
         photo_path = dependencies.file_service.get_folder_path('photos') / f"{photo.file_id}.jpg"
         photo_path.parent.mkdir(parents=True, exist_ok=True)
         await message.bot.download_file(file_info.file_path, destination=str(photo_path))
+        logger.info(f"Фото скачано: {photo_path.absolute()}")
         
         # Сохраняем путь к фото в состоянии
         await state.update_data(photo_path=str(photo_path.absolute()))
+        logger.info(f"Путь к фото сохранен в состоянии: {photo_path.absolute()}")
+        
+        # Устанавливаем состояние ожидания промпта
         await state.set_state(PostNowStates.waiting_for_prompt)
+        new_state = await state.get_state()
+        logger.info(f"Состояние изменено на: {new_state}")
         
         await message.answer(
             "✅ <b>Фотография получена!</b>\n\n"
@@ -2505,6 +2519,7 @@ async def post_now_process_photo(message: Message, state: FSMContext):
             "Или отправьте 'отмена' для отмены:",
             parse_mode="HTML"
         )
+        logger.info("Сообщение с запросом промпта отправлено пользователю")
         
     except Exception as e:
         logger.error(f"Ошибка при обработке фото: {e}", exc_info=True)
