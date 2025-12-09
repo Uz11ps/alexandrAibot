@@ -15,6 +15,7 @@ async def handle_photo_from_employee(message: Message, state: FSMContext):
     """Обрабатывает фотографии от сотрудников"""
     from services import dependencies
     from handlers.admin_handlers import is_admin
+    from handlers.admin_handlers import PostNowStates
     
     # Пропускаем сообщения от администратора (они обрабатываются в admin_handlers)
     if is_admin(message.from_user.id):
@@ -22,6 +23,7 @@ async def handle_photo_from_employee(message: Message, state: FSMContext):
         # Если администратор находится в каком-либо FSM состоянии, пропускаем обработку
         # Это позволит FSM обработчикам из admin_handlers обработать сообщение
         if current_state:
+            logger.debug(f"Пропускаем фото от администратора в состоянии FSM: {current_state}")
             return
     
     if not dependencies.employee_service:
