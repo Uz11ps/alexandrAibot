@@ -2442,13 +2442,24 @@ async def schedule_add_post_description(message: Message, state: FSMContext):
 @router.callback_query(F.data == "post_now")
 async def post_now_start(callback: CallbackQuery, state: FSMContext):
     """Начинает процесс публикации поста сейчас"""
+    logger.info(f"🔴 Кнопка 'Опубликовать сейчас' нажата пользователем {callback.from_user.id}")
+    
     if not is_admin(callback.from_user.id):
         await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
         return
     
+    # Проверяем текущее состояние перед установкой нового
+    old_state = await state.get_state()
+    logger.info(f"🔴 Текущее состояние перед установкой: {old_state}")
+    
     # Устанавливаем состояние ожидания фото
     await state.set_state(PostNowStates.waiting_for_photo)
-    logger.info(f"Установлено состояние PostNowStates.waiting_for_photo для пользователя {callback.from_user.id}")
+    new_state = await state.get_state()
+    logger.info(f"🔴 Установлено состояние PostNowStates.waiting_for_photo для пользователя {callback.from_user.id}. Новое состояние: {new_state}")
+    
+    # Дополнительная проверка состояния
+    if new_state != PostNowStates.waiting_for_photo:
+        logger.error(f"❌ КРИТИЧЕСКАЯ ОШИБКА: Состояние не установлено правильно! Ожидалось: PostNowStates.waiting_for_photo, получено: {new_state}")
     
     await safe_answer_callback(callback)
     await callback.message.answer(
@@ -2457,6 +2468,7 @@ async def post_now_start(callback: CallbackQuery, state: FSMContext):
         "Или отправьте 'отмена' для отмены:",
         parse_mode="HTML"
     )
+    logger.info(f"🔴 Сообщение с запросом фото отправлено пользователю {callback.from_user.id}")
 
 
 @router.message(PostNowStates.waiting_for_photo)
