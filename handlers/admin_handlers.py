@@ -2480,30 +2480,6 @@ async def post_now_start(callback: CallbackQuery, state: FSMContext):
     await safe_answer_callback(callback)
 
 
-@router.callback_query(F.data.startswith("post_now_type_"))
-async def post_now_select_type(callback: CallbackQuery, state: FSMContext):
-    """Обрабатывает выбор типа поста для публикации"""
-    if not is_admin(callback.from_user.id):
-        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
-        return
-    
-    post_type = callback.data.replace("post_now_type_", "")
-    await state.update_data(post_type=post_type)
-    await state.set_state(PostNowStates.waiting_for_photo)
-    
-    await safe_edit_message(
-        callback,
-        f"🚀 <b>Опубликовать сейчас</b>\n\n"
-        f"Тип поста: <b>{post_type}</b>\n\n"
-        f"<b>⚠️ Обязательно прикрепите фотографию!</b>\n\n"
-        f"Отправьте фото или отправьте 'отмена' для отмены:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_back")]
-        ])
-    )
-    await safe_answer_callback(callback)
-
-
 @router.message(PostNowStates.waiting_for_photo)
 async def post_now_process_photo(message: Message, state: FSMContext):
     """Обрабатывает фото и переходит к вводу промпта"""
