@@ -2707,26 +2707,87 @@ async def post_now_process_prompt(message: Message, state: FSMContext):
         # Поддерживаем как старый формат (одно фото), так и новый (несколько фото)
         photo_paths = data.get('photo_paths', [])
         photo_path = data.get('photo_path')  # Для обратной совместимости
+        video_paths = data.get('video_paths', [])
+        video_path = data.get('video_path')  # Для видео
+        has_video = data.get('has_video', False)
         
         # Если есть список фото, используем его, иначе используем одно фото
         if not photo_paths and photo_path:
             photo_paths = [photo_path]
         
-        if not photo_paths:
-            await message.answer("❌ Ошибка: фотографии не найдены. Начните заново.")
+        # Если есть видео, добавляем его в список медиа
+        if video_paths:
+            pass  # Видео уже в списке
+        elif video_path:
+            video_paths = [video_path]
+        
+        if not photo_paths and not video_paths:
+            await message.answer("❌ Ошибка: медиафайлы не найдены. Начните заново.")
             await safe_clear_state(state)
             return
         
         prompt = message.text.strip()
         
         # Отправляем сообщение о генерации
-        photo_count_text = f"{len(photo_paths)} фотографий" if len(photo_paths) > 1 else "фото"
-        loading_msg = await message.answer(f"⏳ Генерирую пост на основе {photo_count_text} и промпта...")
+        if has_video:
+            media_text = f"{len(video_paths)} видео" if len(video_paths) > 1 else "видео"
+            if photo_paths:
+                media_text += f" и {len(photo_paths)} фото" if len(photo_paths) > 1 else " и фото"
+        else:
+            media_text = f"{len(photo_paths)} фотографий" if len(photo_paths) > 1 else "фото"
+        loading_msg = await message.answer(f"⏳ Генерирую пост на основе {media_text} и промпта...")
         
-        # Генерируем пост на основе фото и промпта
-        post_text, photos = await dependencies.post_service._generate_post_from_photo_and_prompt(
-            photo_paths, prompt
-        )
+        # Генерируем пост на основе медиа и промпта
+        if has_video:
+            # Есть видео - анализируем его через AI
+            video_description = None
+            if video_paths:
+                try:
+                    logger.info(f"Анализ видео через AI: {video_paths[0]}")
+                    video_description = await dependencies.ai_service.analyze_video(video_paths[0])
+                    logger.info(f"Описание видео получено: {video_description[:100]}...")
+                except Exception as e:
+                    logger.error(f"Ошибка при анализе видео: {e}", exc_info=True)
+                    video_description = f"Видео со строительного объекта. [Ошибка при анализе: {str(e)}]"
+            
+            # Если есть и фото, и видео - анализируем оба
+            if photo_paths:
+                # Анализируем фото
+                if len(photo_paths) == 1:
+                    photo_description = await dependencies.ai_service.analyze_photo(photo_paths[0])
+                else:
+                    photo_description = await dependencies.ai_service.analyze_multiple_photos(photo_paths)
+                
+                # Объединяем описания
+                combined_description = f"{photo_description}\n\n{video_description}" if video_description else photo_description
+                
+                # Генерируем пост на основе фото и видео
+                prompt_with_media = f"{prompt}\n\nИспользуй информацию из фотографий и видео для создания поста."
+                post_text = await dependencies.ai_service.generate_post_text(
+                    prompt=prompt_with_media,
+                    photos_description=combined_description
+                )
+            else:
+                # Только видео - генерируем пост на основе анализа видео
+                prompt_with_video = f"{prompt}\n\nИспользуй информацию из видео для создания поста."
+                post_text = await dependencies.ai_service.generate_post_text(
+                    prompt=prompt_with_video,
+                    photos_description=video_description
+                )
+            
+            # Применяем очистку и форматирование
+            from services.ai_service import clean_ai_response, markdown_to_html
+            post_text = clean_ai_response(post_text)
+            post_text = markdown_to_html(post_text)
+            if len(post_text) > 900:
+                post_text = post_text[:900] + "..."
+            
+            photos = []  # Видео будет обработано отдельно при публикации
+        else:
+            # Есть только фото - используем обычную генерацию
+            post_text, photos = await dependencies.post_service._generate_post_from_photo_and_prompt(
+                photo_paths, prompt
+            )
         
         # Удаляем сообщение о загрузке
         try:
