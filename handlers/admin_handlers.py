@@ -2446,38 +2446,17 @@ async def post_now_start(callback: CallbackQuery, state: FSMContext):
         await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
         return
     
-    post_types_config = PostTypesConfigService()
-    all_types = post_types_config.get_all_post_types()
+    # Устанавливаем состояние ожидания фото
+    await state.set_state(PostNowStates.waiting_for_photo)
+    logger.info(f"Установлено состояние PostNowStates.waiting_for_photo для пользователя {callback.from_user.id}")
     
-    # Собираем уникальные типы постов из всех дней
-    post_types = set()
-    for day_posts in all_types.values():
-        if isinstance(day_posts, list):
-            for post in day_posts:
-                post_types.add(post.get('name', ''))
-        elif isinstance(day_posts, dict):
-            post_types.add(day_posts.get('name', ''))
-    
-    if not post_types:
-        await safe_answer_callback(callback, "Нет доступных типов постов", show_alert=True)
-        return
-    
-    buttons = []
-    for post_type in sorted(post_types):
-        if post_type:
-            button_text = post_type[:30] if len(post_type) <= 30 else post_type[:27] + "..."
-            buttons.append([InlineKeyboardButton(text=f"📝 {button_text}", callback_data=f"post_now_type_{post_type}")])
-    
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu_back")])
-    
-    await safe_edit_message(
-        callback,
-        "🚀 <b>Опубликовать сейчас</b>\n\n"
-        "Выберите тип поста:\n\n"
-        "<b>⚠️ Внимание:</b> После выбора типа необходимо будет обязательно прикрепить фотографию.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
-    )
     await safe_answer_callback(callback)
+    await callback.message.answer(
+        "🚀 <b>Опубликовать сейчас</b>\n\n"
+        "<b>Шаг 1:</b> Прикрепите фотографию к сообщению\n\n"
+        "Или отправьте 'отмена' для отмены:",
+        parse_mode="HTML"
+    )
 
 
 @router.message(PostNowStates.waiting_for_photo)
