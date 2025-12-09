@@ -20,7 +20,7 @@ async def handle_photo_from_employee(message: Message, state: FSMContext):
     # Это критически важно для работы FSM обработчиков из admin_handlers
     if is_admin(message.from_user.id):
         current_state = await state.get_state()
-        logger.debug(f"Пропускаем фото от администратора. Текущее состояние FSM: {current_state}")
+        logger.info(f"⚠️ ПРОПУСКАЕМ фото от администратора {message.from_user.id}. Текущее состояние FSM: {current_state}")
         # Возвращаемся БЕЗ обработки, чтобы FSM обработчики из admin_handlers могли обработать сообщение
         return
     
