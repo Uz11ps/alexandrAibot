@@ -789,105 +789,22 @@ class AIService:
             return await self.analyze_photo(frame_path)
     
     def _get_photo_analysis_prompt(self) -> str:
-            
-            # Пробуем переключить прокси или API ключ при ошибке подключения или таймауте
-            retry_success = False
-            
-            # Пробуем несколько прокси подряд (максимум 5 попыток или все доступные)
-            max_proxy_retries = min(5, len(self.proxy_list)) if self.proxy_enabled else 0
-            for proxy_attempt in range(max_proxy_retries):
-                if self.proxy_enabled and (is_timeout or "403" in error_str or "connection" in error_str.lower()):
-                    if self._switch_proxy():
-                        logger.info(f"Попытка {proxy_attempt + 1}/{max_proxy_retries} анализа фото с другим прокси...")
-                        try:
-                            timeout_seconds = 180.0
-                            response = await asyncio.wait_for(
-                                self.client.chat.completions.create(
-                                    model="gpt-4o",
-                                    messages=[photo_message],
-                                    max_tokens=500
-                                ),
-                                timeout=timeout_seconds
-                            )
-                            retry_success = True
-                            return response.choices[0].message.content.strip()
-                        except asyncio.TimeoutError:
-                            logger.warning(f"Таймаут при попытке {proxy_attempt + 1} анализа фото с прокси")
-                            if proxy_attempt < max_proxy_retries - 1:
-                                continue  # Пробуем следующий прокси
-                        except Exception as retry_error:
-                            logger.warning(f"Ошибка при попытке {proxy_attempt + 1} анализа фото с прокси: {retry_error}")
-                            if proxy_attempt < max_proxy_retries - 1:
-                                continue  # Пробуем следующий прокси
-                    else:
-                        break  # Нет больше прокси для переключения
-            
-            # Если прокси не помогли, пробуем переключить API ключ (он также переключит прокси)
-            # Пробуем несколько комбинаций ключ+прокси (максимум 2 попытки)
-            max_key_retries = min(2, len(self.api_keys)) if len(self.api_keys) > 1 else 0
-            for key_attempt in range(max_key_retries):
-                if not retry_success and (is_timeout or "403" in error_str or "401" in error_str or "rate limit" in error_str.lower() or "connection" in error_str.lower()):
-                    if self._switch_api_key():
-                        logger.info(f"Попытка {key_attempt + 1}/{max_key_retries} анализа фото с другим API ключом и прокси...")
-                        try:
-                            timeout_seconds = 180.0 if self.proxy_enabled else 60.0
-                            response = await asyncio.wait_for(
-                                self.client.chat.completions.create(
-                                    model="gpt-4o",
-                                    messages=[photo_message],
-                                    max_tokens=500
-                                ),
-                                timeout=timeout_seconds
-                            )
-                            return response.choices[0].message.content.strip()
-                        except asyncio.TimeoutError:
-                            timeout_used = 180.0 if self.proxy_enabled else 60.0
-                            logger.warning(f"Таймаут при попытке {key_attempt + 1} анализа фото с другим ключом (превышено {timeout_used} секунд)")
-                            if key_attempt < max_key_retries - 1:
-                                continue  # Пробуем следующую комбинацию
-                        except Exception as retry_error:
-                            logger.warning(f"Ошибка при попытке {key_attempt + 1} анализа фото с другим API ключом: {retry_error}")
-                            if key_attempt < max_key_retries - 1:
-                                continue  # Пробуем следующую комбинацию
-                    else:
-                        break  # Нет больше ключей для переключения
-            
-            # Финальная попытка: пробуем без прокси, если все прокси не работали
-            if not retry_success and self.proxy_enabled and ("connection" in error_str.lower() or "timeout" in error_str.lower()):
-                logger.info("Все прокси не работают. Пробуем финальную попытку анализа фото без прокси...")
-                try:
-                    # Создаем клиент без прокси
-                    client_without_proxy = AsyncOpenAI(
-                        api_key=self.api_keys[self.current_api_key_index]
-                    )
-                    timeout_seconds = 60.0  # Обычный таймаут без прокси
-                    response = await asyncio.wait_for(
-                        client_without_proxy.chat.completions.create(
-                            model="gpt-4o",
-                            messages=[photo_message],
-                            max_tokens=500
-                        ),
-                        timeout=timeout_seconds
-                    )
-                    logger.info("Успешный анализ фото без прокси!")
-                    return response.choices[0].message.content.strip()
-                except Exception as final_error:
-                    logger.warning(f"Финальная попытка анализа фото без прокси также не удалась: {final_error}")
-            
-            # Если ничего не помогло, возвращаем fallback
-            from pathlib import Path
-            file_name = Path(photo_path).name
-            return f"Фотография со строительного объекта: {file_name}. На фотографии запечатлен текущий этап работ на объекте компании «Археон»."
-            
-            # Проверяем ошибку региона
-            if "unsupported_country_region_territory" in error_str or "403" in error_str:
-                logger.warning("OpenAI API недоступен в вашем регионе. Используем fallback описание.")
-                # Возвращаем более информативное описание
-                from pathlib import Path
-                file_name = Path(photo_path).name
-                return f"Фотография со строительного объекта: {file_name}. На фотографии запечатлен текущий этап работ на объекте компании «Археон»."
-            
-            raise
+        """
+        Получает промпт для анализа фотографий
+        
+        Returns:
+            Текст промпта для анализа фотографий
+        """
+        if self.prompt_config_service:
+            prompt = self.prompt_config_service.get_prompt("analyze_photo", "user_prompt")
+            if prompt:
+                return prompt
+        
+        # Дефолтный промпт
+        return """Проанализируй эту фотографию со строительного объекта.
+Опиши что на ней изображено: тип работ, этап строительства, особенности участка,
+видимые проблемы или сложности, используемые материалы и технологии.
+Будь конкретным и профессиональным."""
     
     async def analyze_video_frame(self, frame_path: str, frame_number: int, total_frames: int) -> str:
         """
