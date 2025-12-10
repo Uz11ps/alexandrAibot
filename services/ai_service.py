@@ -638,9 +638,9 @@ class AIService:
                     frame_path = temp_dir / f"frame_{i}_{frame_idx}.jpg"
                     cv2.imwrite(str(frame_path), frame)
                     
-                    # Анализируем кадр через AI
+                    # Анализируем кадр через AI с улучшенным промптом для видео
                     logger.info(f"Анализ кадра {i+1}/{len(frame_indices)} (кадр {frame_idx}/{total_frames})")
-                    frame_description = await self.analyze_photo(str(frame_path))
+                    frame_description = await self.analyze_video_frame(str(frame_path), i+1, len(frame_indices))
                     
                     # Добавляем временную метку
                     timestamp = frame_idx / fps if fps > 0 else 0
