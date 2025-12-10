@@ -579,13 +579,13 @@ class AIService:
         
         return combined_description
     
-    async def analyze_video(self, video_path: str, frames_count: int = 5) -> str:
+    async def analyze_video(self, video_path: str, frames_count: int = 12) -> str:
         """
         Анализирует видео, извлекая ключевые кадры и анализируя их через AI
         
         Args:
             video_path: Путь к файлу видео
-            frames_count: Количество кадров для анализа (по умолчанию 5)
+            frames_count: Количество кадров для анализа (по умолчанию 12 для более детального анализа)
             
         Returns:
             Объединенное описание содержимого видео на основе анализа кадров
