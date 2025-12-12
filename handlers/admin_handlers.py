@@ -2901,14 +2901,24 @@ async def post_now_process_prompt(message: Message, state: FSMContext):
                 combined_description = f"{photo_description}\n\n{video_description}" if video_description else photo_description
                 
                 # Генерируем пост на основе фото и видео
-                prompt_with_media = f"{prompt}\n\nИспользуй информацию из фотографий и видео для создания поста."
+                prompt_with_media = f"""{prompt}
+
+КРИТИЧЕСКИ ВАЖНО: Используй ТОЛЬКО информацию из описания фотографий и видео ниже.
+НЕ придумывай информацию о других объектах или работах, которых нет в описании.
+НЕ используй шаблонные тексты о торговых центрах, солнечных панелях или других объектах, если их нет в описании.
+Пост должен точно отражать то, что изображено на предоставленных медиафайлах."""
                 post_text = await dependencies.ai_service.generate_post_text(
                     prompt=prompt_with_media,
                     photos_description=combined_description
                 )
             else:
                 # Только видео - генерируем пост на основе анализа видео
-                prompt_with_video = f"{prompt}\n\nИспользуй информацию из видео для создания поста."
+                prompt_with_video = f"""{prompt}
+
+КРИТИЧЕСКИ ВАЖНО: Используй ТОЛЬКО информацию из описания видео ниже.
+НЕ придумывай информацию о других объектах или работах, которых нет в описании.
+НЕ используй шаблонные тексты о торговых центрах, солнечных панелях или других объектах, если их нет в описании.
+Пост должен точно отражать то, что показано в предоставленном видео."""
                 post_text = await dependencies.ai_service.generate_post_text(
                     prompt=prompt_with_video,
                     photos_description=video_description
