@@ -445,43 +445,54 @@ async def menu_generate(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("generate_"))
 async def handle_generate_post(callback: CallbackQuery):
     """Обработчик генерации поста"""
-    if not is_admin(callback.from_user.id):
-        await callback.answer("У вас нет доступа.", show_alert=True)
-        return
-    
-    if not dependencies.post_service:
-        await safe_answer_callback(callback, "Сервис недоступен", show_alert=True)
-        return
-    
-    post_type = callback.data.replace("generate_", "")
-    
-    post_generators = {
-        'monday': ('Понедельник', dependencies.post_service.generate_monday_post),
-        'tuesday': ('Вторник', dependencies.post_service.generate_tuesday_post),
-        'wednesday': ('Среда', dependencies.post_service.generate_wednesday_post),
-        'thursday': ('Четверг', dependencies.post_service.generate_thursday_post),
-        'friday': ('Пятница', dependencies.post_service.generate_friday_post),
-        'saturday': ('Суббота', dependencies.post_service.generate_saturday_post)
-    }
-    
-    if post_type not in post_generators:
-        await safe_answer_callback(callback, "Неизвестный тип поста", show_alert=True)
-        return
-    
-    day_name, generator = post_generators[post_type]
-    
-    # Показываем индикатор загрузки
-    await safe_answer_callback(callback, "Генерация поста...")
-    await safe_edit_message(
-        callback,
-        f"⏳ <b>Генерирую пост для {day_name}...</b>\n\n"
-        f"Пожалуйста, подождите. Это может занять некоторое время.\n\n"
-        f"📝 Анализирую материалы...\n"
-        f"🤖 Генерирую текст...",
-        reply_markup=None
-    )
-    
     try:
+        logger.info(f"Получен callback для генерации поста: {callback.data} от пользователя {callback.from_user.id}")
+        
+        if not is_admin(callback.from_user.id):
+            logger.warning(f"Попытка доступа не администратора: {callback.from_user.id}")
+            await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
+            return
+        
+        if not dependencies.post_service:
+            logger.error("PostService недоступен")
+            await safe_answer_callback(callback, "Сервис недоступен", show_alert=True)
+            return
+        
+        post_type = callback.data.replace("generate_", "")
+        logger.info(f"Тип поста: {post_type}")
+        
+        post_generators = {
+            'monday': ('Понедельник', dependencies.post_service.generate_monday_post),
+            'tuesday': ('Вторник', dependencies.post_service.generate_tuesday_post),
+            'wednesday': ('Среда', dependencies.post_service.generate_wednesday_post),
+            'thursday': ('Четверг', dependencies.post_service.generate_thursday_post),
+            'friday': ('Пятница', dependencies.post_service.generate_friday_post),
+            'saturday': ('Суббота', dependencies.post_service.generate_saturday_post)
+        }
+        
+        if post_type not in post_generators:
+            logger.error(f"Неизвестный тип поста: {post_type}")
+            await safe_answer_callback(callback, "Неизвестный тип поста", show_alert=True)
+            return
+        
+        day_name, generator = post_generators[post_type]
+        logger.info(f"Выбран генератор для {day_name}")
+        
+        # ВАЖНО: Отвечаем на callback СРАЗУ, до начала длительной операции
+        await safe_answer_callback(callback, "Генерация поста...")
+        logger.info("Ответ на callback отправлен")
+        
+        # Показываем индикатор загрузки
+        await safe_edit_message(
+            callback,
+            f"⏳ <b>Генерирую пост для {day_name}...</b>\n\n"
+            f"Пожалуйста, подождите. Это может занять некоторое время.\n\n"
+            f"📝 Анализирую материалы...\n"
+            f"🤖 Генерирую текст...",
+            reply_markup=None
+        )
+        logger.info("Сообщение о загрузке отправлено")
+        
         logger.info(f"Начало генерации поста для {day_name} (тип: {post_type})")
         
         post_text, photos = await generator()
@@ -501,9 +512,23 @@ async def handle_generate_post(callback: CallbackQuery):
                 [InlineKeyboardButton(text="◀️ Назад", callback_data="menu_back")]
             ])
         )
+        logger.info("Сообщение об успехе отправлено")
+        
     except Exception as e:
-        logger.error(f"Ошибка при генерации поста: {e}")
-        await safe_answer_callback(callback, f"Ошибка: {str(e)}", show_alert=True)
+        logger.error(f"Ошибка при генерации поста: {e}", exc_info=True)
+        try:
+            await safe_answer_callback(callback, f"Ошибка: {str(e)[:100]}", show_alert=True)
+            await safe_edit_message(
+                callback,
+                f"❌ <b>Ошибка при генерации поста</b>\n\n"
+                f"{str(e)}\n\n"
+                f"Попробуйте еще раз или проверьте логи.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="◀️ Назад", callback_data="menu_back")]
+                ])
+            )
+        except Exception as e2:
+            logger.error(f"Ошибка при отправке сообщения об ошибке: {e2}", exc_info=True)
 
 
 def get_schedule_keyboard() -> InlineKeyboardMarkup:
