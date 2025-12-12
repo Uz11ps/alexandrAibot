@@ -415,7 +415,6 @@ async def menu_generate(callback: CallbackQuery):
         return
     
     post_types_config = PostTypesConfigService()
-    all_types = post_types_config.get_all_post_types()
     
     types_text = "📝 <b>Генерация поста</b>\n\n"
     types_text += "<b>Текущие типы постов:</b>\n"
@@ -429,7 +428,8 @@ async def menu_generate(callback: CallbackQuery):
     }
     
     for day, day_name in day_names_ru.items():
-        post_type = all_types.get(day, {})
+        # Используем get_post_type для получения первого поста (словарь)
+        post_type = post_types_config.get_post_type(day)
         types_text += f"• {day_name}: <b>{post_type.get('name', 'Не указан')}</b>\n"
     
     types_text += "\n\nВыберите тип поста для генерации или настройте типы:"
