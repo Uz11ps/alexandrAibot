@@ -1269,6 +1269,60 @@ class AIService:
         )
         return markdown_to_html(fallback_text)
     
+    async def analyze_sources(self, urls: List[str]) -> str:
+        """
+        Анализирует источники (URL) и возвращает контекст для использования в генерации поста
+        
+        Args:
+            urls: Список URL источников (сайты, Telegram каналы, VK группы)
+            
+        Returns:
+            Текст с анализом источников для использования в промпте
+        """
+        if not urls:
+            return ""
+        
+        try:
+            # Формируем промпт для анализа источников
+            urls_text = "\n".join([f"- {url}" for url in urls])
+            
+            prompt = f"""Проанализируй следующие источники и создай краткое резюме ключевой информации, которая может быть полезна для создания поста о строительстве и земельных работах:
+
+Источники:
+{urls_text}
+
+Верни краткое резюме (максимум 300 слов) с ключевыми темами, идеями и информацией из этих источников, которые могут быть использованы для создания поста компании "Археон".
+Если это сайты или посты из социальных сетей, выдели основные темы и интересные моменты."""
+            
+            logger.info(f"Анализ {len(urls)} источников через AI")
+            
+            timeout_seconds = 120.0 if self.proxy_enabled else 60.0
+            
+            response = await asyncio.wait_for(
+                self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.5,
+                    max_tokens=1000
+                ),
+                timeout=timeout_seconds
+            )
+            
+            result = response.choices[0].message.content.strip()
+            logger.info(f"Анализ источников завершен (длина: {len(result)} символов)")
+            return result
+        
+        except asyncio.TimeoutError:
+            logger.error(f"Таймаут при анализе источников")
+            return f"\n\nДополнительные источники для контекста:\n" + "\n".join([f"- {url}" for url in urls])
+        
+        except Exception as e:
+            logger.error(f"Ошибка при анализе источников: {e}", exc_info=True)
+            # Возвращаем просто список URL в случае ошибки
+            return f"\n\nДополнительные источники для контекста:\n" + "\n".join([f"- {url}" for url in urls])
+    
     async def generate_meme_idea(self, topic: str) -> str:
         """
         Генерирует идею для мема на заданную тему

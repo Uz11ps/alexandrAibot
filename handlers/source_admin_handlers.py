@@ -119,6 +119,9 @@ async def source_add_start(callback: CallbackQuery, state: FSMContext):
             InlineKeyboardButton(text="📱 Telegram", callback_data="source_type_telegram"),
             InlineKeyboardButton(text="🔵 VK", callback_data="source_type_vk")
         ],
+        [
+            InlineKeyboardButton(text="🌐 Сайт", callback_data="source_type_website")
+        ],
         [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_sources")]
     ])
     
@@ -138,13 +141,20 @@ async def source_process_type(callback: CallbackQuery, state: FSMContext):
         await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
         return
     
-    source_type = callback.data.split("_")[-1]  # "telegram" или "vk"
+    source_type = callback.data.split("_")[-1]  # "telegram", "vk" или "website"
     
     await state.update_data(source_type=source_type)
     await state.set_state(SourceManagementStates.waiting_for_source_url)
     
-    type_name = "Telegram канал" if source_type == "telegram" else "VK группа"
-    example_url = "https://t.me/channel_name" if source_type == "telegram" else "https://vk.com/group_name"
+    if source_type == "telegram":
+        type_name = "Telegram канал"
+        example_url = "https://t.me/channel_name"
+    elif source_type == "vk":
+        type_name = "VK группа"
+        example_url = "https://vk.com/group_name"
+    else:  # website
+        type_name = "Сайт"
+        example_url = "https://example.com"
     
     await safe_edit_message(
         callback,
@@ -194,6 +204,14 @@ async def source_process_url(message: Message, state: FSMContext):
         await message.answer(
             "❌ Неверный формат URL для VK!\n\n"
             "Используйте формат: https://vk.com/group_name\n\n"
+            "Попробуйте снова или отправьте 'отмена':"
+        )
+        return
+    
+    if source_type == "website" and not url.startswith(("https://", "http://")):
+        await message.answer(
+            "❌ Неверный формат URL для сайта!\n\n"
+            "Используйте формат: https://example.com\n\n"
             "Попробуйте снова или отправьте 'отмена':"
         )
         return

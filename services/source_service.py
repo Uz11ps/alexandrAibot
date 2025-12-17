@@ -14,7 +14,7 @@ SOURCES_FILE = Path("storage/sources.json")
 @dataclass
 class Source:
     """Информация об источнике"""
-    type: str  # "telegram" или "vk"
+    type: str  # "telegram", "vk" или "website"
     url: str
     name: Optional[str] = None  # Опциональное имя для удобства
     added_at: Optional[str] = None
@@ -64,7 +64,7 @@ class SourceService:
         Добавляет новый источник
         
         Args:
-            source_type: Тип источника ("telegram" или "vk")
+            source_type: Тип источника ("telegram", "vk" или "website")
             url: URL источника
             name: Опциональное имя источника
             
@@ -77,7 +77,7 @@ class SourceService:
             return False
         
         # Валидация типа
-        if source_type not in ["telegram", "vk"]:
+        if source_type not in ["telegram", "vk", "website"]:
             logger.error(f"Неверный тип источника: {source_type}")
             return False
         
@@ -88,6 +88,10 @@ class SourceService:
         
         if source_type == "vk" and not url.startswith(("https://vk.com/", "http://vk.com/")):
             logger.error(f"Неверный формат VK URL: {url}")
+            return False
+        
+        if source_type == "website" and not url.startswith(("https://", "http://")):
+            logger.error(f"Неверный формат Website URL: {url}")
             return False
         
         source = Source(

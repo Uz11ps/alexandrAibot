@@ -168,6 +168,7 @@ class PostNowStates(StatesGroup):
     """Состояния для функции 'Опубликовать сейчас'"""
     waiting_for_photo = State()
     waiting_for_prompt = State()
+    waiting_for_sources = State()  # Ожидание источников (опционально)
     waiting_for_approval = State()  # Ожидание одобрения сгенерированного поста
 
 
@@ -186,26 +187,61 @@ def is_admin(user_id: int) -> bool:
     return False
 
 
+def is_employee(user_id: int) -> bool:
+    """Проверяет, является ли пользователь сотрудником"""
+    if not dependencies.employee_service:
+        return False
+    
+    employee = dependencies.employee_service.get_employee(user_id)
+    return employee is not None and employee.is_active
+
+
 @router.message(Command("start"))
 async def cmd_start(message: Message):
     """Обработчик команды /start"""
-    if not is_admin(message.from_user.id):
+    user_id = message.from_user.id
+    
+    # Проверяем, является ли пользователь администратором или сотрудником
+    if not is_admin(user_id) and not is_employee(user_id):
         await message.answer("У вас нет доступа к этому боту.")
         return
     
-    await message.answer(
-        "👋 <b>Добро пожаловать в панель управления ботом!</b>\n\n"
-        "Используйте кнопки ниже для навигации по меню.",
-        reply_markup=get_main_menu_keyboard(),
-        parse_mode="HTML"
-    )
+    # Администраторы получают полное меню
+    if is_admin(user_id):
+        await message.answer(
+            "👋 <b>Добро пожаловать в панель управления ботом!</b>\n\n"
+            "Используйте кнопки ниже для навигации по меню.",
+            reply_markup=get_main_menu_keyboard(),
+            parse_mode="HTML"
+        )
+    else:
+        # Сотрудники получают ограниченное меню (только для отправки материалов)
+        await message.answer(
+            "👋 <b>Добро пожаловать!</b>\n\n"
+            "Вы можете отправлять фотографии, документы и текстовые сообщения. "
+            "Администратор получит ваши материалы.",
+            parse_mode="HTML"
+        )
 
 
 @router.message(Command("menu"))
 async def cmd_menu(message: Message):
     """Показывает главное меню администратора"""
-    if not is_admin(message.from_user.id):
+    user_id = message.from_user.id
+    
+    # Проверяем, является ли пользователь администратором или сотрудником
+    if not is_admin(user_id) and not is_employee(user_id):
         await message.answer("У вас нет доступа.")
+        return
+    
+    # Только администраторы получают полное меню
+    if not is_admin(user_id):
+        await message.answer(
+            "📋 <b>Меню</b>\n\n"
+            "Вы можете отправлять фотографии, документы и текстовые сообщения. "
+            "Администратор получит ваши материалы.",
+            parse_mode="HTML"
+        )
         return
     
     await message.answer(
@@ -2892,14 +2928,27 @@ async def post_now_process_prompt(message: Message, state: FSMContext):
         
         prompt = message.text.strip()
         
-        # Отправляем сообщение о генерации
-        if has_video:
-            media_text = f"{len(video_paths)} видео" if len(video_paths) > 1 else "видео"
-            if photo_paths:
-                media_text += f" и {len(photo_paths)} фото" if len(photo_paths) > 1 else " и фото"
-        else:
-            media_text = f"{len(photo_paths)} фотографий" if len(photo_paths) > 1 else "фото"
-        loading_msg = await message.answer(f"⏳ Генерирую пост на основе {media_text} и промпта...")
+        # Сохраняем промпт в состоянии
+        await state.update_data(user_prompt=prompt)
+        
+        # Спрашиваем, хочет ли пользователь добавить источники
+        cancel_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Да, добавить источники", callback_data="post_now_add_sources"),
+                InlineKeyboardButton(text="➡️ Пропустить", callback_data="post_now_skip_sources")
+            ],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="post_now_cancel")]
+        ])
+        
+        await message.answer(
+            "🔗 <b>Добавить источники?</b>\n\n"
+            "Вы можете прикрепить ссылки на сайты, Telegram каналы или VK группы для дополнительного контекста.\n\n"
+            "Источники будут проанализированы через AI и использованы при генерации поста.",
+            reply_markup=cancel_keyboard,
+            parse_mode="HTML"
+        )
+        await state.set_state(PostNowStates.waiting_for_sources)
+        return
         
         # Генерируем пост на основе медиа и промпта
         if has_video:
@@ -3217,6 +3266,354 @@ async def post_now_edit(callback: CallbackQuery, state: FSMContext):
         reply_markup=cancel_keyboard,
         parse_mode="HTML"
     )
+
+
+@router.callback_query(F.data == "post_now_add_sources")
+async def post_now_add_sources(callback: CallbackQuery, state: FSMContext):
+    """Обработчик кнопки 'Добавить источники'"""
+    if not is_admin(callback.from_user.id):
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
+        return
+    
+    await safe_answer_callback(callback)
+    
+    cancel_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Готово", callback_data="post_now_sources_done"),
+            InlineKeyboardButton(text="➡️ Пропустить", callback_data="post_now_skip_sources")
+        ],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="post_now_cancel")]
+    ])
+    
+    await callback.message.answer(
+        "🔗 <b>Добавление источников</b>\n\n"
+        "Отправьте ссылки на источники (по одной ссылке в сообщении):\n\n"
+        "• Сайты: https://example.com\n"
+        "• Telegram каналы: https://t.me/channel_name\n"
+        "• VK группы: https://vk.com/group_name\n\n"
+        "Можно добавить несколько ссылок. После каждой ссылки нажмите 'Готово' или 'Пропустить'.",
+        reply_markup=cancel_keyboard,
+        parse_mode="HTML"
+    )
+
+
+@router.callback_query(F.data == "post_now_skip_sources")
+async def post_now_skip_sources(callback: CallbackQuery, state: FSMContext):
+    """Обработчик кнопки 'Пропустить источники' - переходит к генерации поста"""
+    if not is_admin(callback.from_user.id):
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
+        return
+    
+    await safe_answer_callback(callback)
+    await _generate_post_from_state(callback.message, state)
+
+
+@router.callback_query(F.data == "post_now_sources_done")
+async def post_now_sources_done(callback: CallbackQuery, state: FSMContext):
+    """Обработчик кнопки 'Готово' для источников - переходит к генерации поста"""
+    if not is_admin(callback.from_user.id):
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
+        return
+    
+    await safe_answer_callback(callback)
+    await _generate_post_from_state(callback.message, state)
+
+
+@router.message(PostNowStates.waiting_for_sources)
+async def post_now_process_sources(message: Message, state: FSMContext):
+    """Обрабатывает источники (ссылки) от пользователя"""
+    if not is_admin(message.from_user.id):
+        await message.answer("У вас нет доступа.")
+        await safe_clear_state(state)
+        return
+    
+    # Проверка на отмену
+    if message.text and message.text.lower().strip() in ['отмена', 'cancel', 'назад']:
+        await safe_clear_state(state)
+        await message.answer("❌ Публикация отменена.", reply_markup=get_main_menu_keyboard())
+        return
+    
+    if not message.text:
+        await message.answer("Пожалуйста, отправьте ссылку на источник.")
+        return
+    
+    url = message.text.strip()
+    
+    # Базовая валидация URL
+    if not (url.startswith("http://") or url.startswith("https://")):
+        await message.answer(
+            "❌ Неверный формат ссылки!\n\n"
+            "Используйте формат:\n"
+            "• https://example.com\n"
+            "• https://t.me/channel_name\n"
+            "• https://vk.com/group_name"
+        )
+        return
+    
+    # Сохраняем ссылку в состоянии
+    data = await state.get_data()
+    sources = data.get('sources', [])
+    sources.append(url)
+    await state.update_data(sources=sources)
+    
+    cancel_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Готово", callback_data="post_now_sources_done"),
+            InlineKeyboardButton(text="➡️ Пропустить", callback_data="post_now_skip_sources")
+        ],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="post_now_cancel")]
+    ])
+    
+    await message.answer(
+        f"✅ Ссылка добавлена: {url}\n\n"
+        f"Всего источников: {len(sources)}\n\n"
+        "Отправьте еще одну ссылку или нажмите 'Готово' для продолжения.",
+        reply_markup=cancel_keyboard
+    )
+
+
+async def _generate_post_from_state(message: Message, state: FSMContext):
+    """Генерирует пост на основе данных из состояния"""
+    try:
+        data = await state.get_data()
+        prompt = data.get('user_prompt', '')
+        photo_paths = data.get('photo_paths', [])
+        photo_path = data.get('photo_path')
+        video_paths = data.get('video_paths', [])
+        video_path = data.get('video_path')
+        has_video = data.get('has_video', False)
+        sources = data.get('sources', [])
+        
+        if not prompt:
+            await message.answer("❌ Ошибка: промпт не найден. Начните заново.")
+            await safe_clear_state(state)
+            return
+        
+        # Если есть список фото, используем его, иначе используем одно фото
+        if not photo_paths and photo_path:
+            photo_paths = [photo_path]
+        
+        # Если есть видео, добавляем его в список медиа
+        if video_paths:
+            pass
+        elif video_path:
+            video_paths = [video_path]
+        
+        if not photo_paths and not video_paths:
+            await message.answer("❌ Ошибка: медиафайлы не найдены. Начните заново.")
+            await safe_clear_state(state)
+            return
+        
+        # Отправляем сообщение о генерации
+        if has_video:
+            media_text = f"{len(video_paths)} видео" if len(video_paths) > 1 else "видео"
+            if photo_paths:
+                media_text += f" и {len(photo_paths)} фото" if len(photo_paths) > 1 else " и фото"
+        else:
+            media_text = f"{len(photo_paths)} фотографий" if len(photo_paths) > 1 else "фото"
+        
+        sources_text = f" и {len(sources)} источников" if sources else ""
+        loading_msg = await message.answer(f"⏳ Генерирую пост на основе {media_text}{sources_text} и промпта...")
+        
+        # Анализируем источники, если они есть
+        sources_context = ""
+        if sources:
+            try:
+                sources_context = await dependencies.ai_service.analyze_sources(sources)
+                logger.info(f"Источники проанализированы: {len(sources_context)} символов")
+            except Exception as e:
+                logger.error(f"Ошибка при анализе источников: {e}", exc_info=True)
+                sources_context = f"\n\nДополнительные источники для контекста:\n" + "\n".join([f"- {url}" for url in sources])
+        
+        # Генерируем пост на основе медиа, промпта и источников
+        if has_video:
+            video_description = None
+            if video_paths:
+                try:
+                    logger.info(f"Анализ видео через AI: {video_paths[0]}")
+                    video_description = await dependencies.ai_service.analyze_video(video_paths[0])
+                    logger.info(f"Описание видео получено: {video_description[:100]}...")
+                except Exception as e:
+                    logger.error(f"Ошибка при анализе видео: {e}", exc_info=True)
+                    video_description = f"Видео со строительного объекта. [Ошибка при анализе: {str(e)}]"
+            
+            if photo_paths:
+                if len(photo_paths) == 1:
+                    photo_description = await dependencies.ai_service.analyze_photo(photo_paths[0])
+                else:
+                    photo_description = await dependencies.ai_service.analyze_multiple_photos(photo_paths)
+                
+                combined_description = f"{photo_description}\n\n{video_description}" if video_description else photo_description
+                
+                prompt_with_media = f"""{prompt}
+
+КРИТИЧЕСКИ ВАЖНО: Используй ТОЛЬКО информацию из описания фотографий и видео ниже.
+НЕ придумывай информацию о других объектах или работах, которых нет в описании.
+Пост должен точно отражать то, что изображено на предоставленных медиафайлах."""
+                
+                if sources_context:
+                    prompt_with_media += f"\n\nДополнительный контекст из источников:\n{sources_context}"
+                
+                post_text = await dependencies.ai_service.generate_post_text(
+                    prompt=prompt_with_media,
+                    photos_description=combined_description
+                )
+            else:
+                prompt_with_video = f"""{prompt}
+
+КРИТИЧЕСКИ ВАЖНО: Используй ТОЛЬКО информацию из описания видео ниже.
+Пост должен точно отражать то, что показано в предоставленном видео."""
+                
+                if sources_context:
+                    prompt_with_video += f"\n\nДополнительный контекст из источников:\n{sources_context}"
+                
+                post_text = await dependencies.ai_service.generate_post_text(
+                    prompt=prompt_with_video,
+                    photos_description=video_description
+                )
+            
+            from services.ai_service import clean_ai_response, markdown_to_html
+            post_text = clean_ai_response(post_text)
+            post_text = markdown_to_html(post_text)
+            if len(post_text) > 900:
+                post_text = post_text[:900] + "..."
+            
+            photos = []
+        else:
+            # Есть только фото - используем обычную генерацию с учетом источников
+            if sources_context:
+                prompt = f"{prompt}\n\nДополнительный контекст из источников:\n{sources_context}"
+            
+            post_text, photos = await dependencies.post_service._generate_post_from_photo_and_prompt(
+                photo_paths, prompt
+            )
+        
+        # Удаляем сообщение о загрузке
+        try:
+            await loading_msg.delete()
+        except:
+            pass
+        
+        if not post_text or "Ошибка" in post_text or post_text.startswith("Ошибка"):
+            await message.answer(
+                f"❌ <b>Ошибка при генерации поста</b>\n\n"
+                f"{post_text}\n\n"
+                f"Попробуйте снова или проверьте логи на сервере.",
+                parse_mode="HTML"
+            )
+            await safe_clear_state(state)
+            return
+        
+        # Сохраняем сгенерированный пост в состоянии для одобрения
+        await state.update_data(
+            generated_post_text=post_text,
+            generated_photo_paths=photos,
+            generated_photo_path=photos[0] if photos else None
+        )
+        await state.set_state(PostNowStates.waiting_for_approval)
+        
+        # Отправляем пост на согласование (код из оригинального post_now_process_prompt)
+        dependencies.telegram_service._draft_photos[message.message_id] = photos.copy()
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Принять и опубликовать", callback_data="post_now_approve"),
+                InlineKeyboardButton(text="✏️ Редактировать", callback_data="post_now_edit")
+            ],
+            [
+                InlineKeyboardButton(text="❌ Отмена", callback_data="post_now_cancel")
+            ]
+        ])
+        
+        try:
+            from pathlib import Path
+            from aiogram.types import InputMediaPhoto
+            
+            MAX_CAPTION_LENGTH = 1024
+            header = "📝 <b>Черновик поста для согласования:</b>\n\n"
+            full_text = f"{header}{post_text}"
+            
+            if len(photos) == 1:
+                photo_file = Path(photos[0])
+                if photo_file.exists():
+                    with open(photos[0], 'rb') as photo:
+                        if len(full_text) <= MAX_CAPTION_LENGTH:
+                            sent_message = await message.answer_photo(
+                                photo=photo,
+                                caption=full_text,
+                                reply_markup=keyboard,
+                                parse_mode="HTML"
+                            )
+                        else:
+                            photo.seek(0)
+                            photo_message = await message.answer_photo(
+                                photo=photo,
+                                caption=f"{header}📝 Полный текст ниже ⬇️",
+                                parse_mode="HTML"
+                            )
+                            sent_message = await message.answer(
+                                text=full_text,
+                                reply_markup=keyboard,
+                                parse_mode="HTML"
+                            )
+                            dependencies.telegram_service._draft_photos[sent_message.message_id] = photos.copy()
+                        dependencies.telegram_service._draft_photos[sent_message.message_id] = photos.copy()
+                else:
+                    sent_message = await message.answer(
+                        f"📝 <b>Черновик поста для согласования:</b>\n\n{post_text}",
+                        reply_markup=keyboard,
+                        parse_mode="HTML"
+                    )
+            else:
+                media = []
+                for i, photo_path in enumerate(photos):
+                    photo_file = Path(photo_path)
+                    if photo_file.exists():
+                        with open(photo_path, 'rb') as photo_data:
+                            if i == 0 and len(full_text) <= MAX_CAPTION_LENGTH:
+                                media.append(InputMediaPhoto(
+                                    media=photo_data,
+                                    caption=full_text,
+                                    parse_mode="HTML"
+                                ))
+                            else:
+                                photo_data.seek(0)
+                                media.append(InputMediaPhoto(media=photo_data))
+                
+                if media:
+                    sent_messages = await message.answer_media_group(media=media)
+                    if len(full_text) > MAX_CAPTION_LENGTH:
+                        sent_message = await message.answer(
+                            text=full_text,
+                            reply_markup=keyboard,
+                            parse_mode="HTML"
+                        )
+                        dependencies.telegram_service._draft_photos[sent_message.message_id] = photos.copy()
+                    else:
+                        sent_message = await message.answer(
+                            text="Выберите действие:",
+                            reply_markup=keyboard,
+                            parse_mode="HTML"
+                        )
+                        dependencies.telegram_service._draft_photos[sent_message.message_id] = photos.copy()
+                else:
+                    sent_message = await message.answer(
+                        f"📝 <b>Черновик поста для согласования:</b>\n\n{post_text}",
+                        reply_markup=keyboard,
+                        parse_mode="HTML"
+                    )
+        except Exception as e:
+            logger.error(f"Ошибка при отправке фото: {e}", exc_info=True)
+            sent_message = await message.answer(
+                f"📝 <b>Черновик поста для согласования:</b>\n\n{post_text}",
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+        
+    except Exception as e:
+        logger.error(f"Ошибка при генерации поста: {e}", exc_info=True)
+        await message.answer(f"❌ Ошибка при генерации поста: {str(e)}")
+        await safe_clear_state(state)
 
 
 @router.callback_query(F.data == "post_now_cancel")
