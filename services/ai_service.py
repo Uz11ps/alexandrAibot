@@ -889,6 +889,13 @@ class AIService:
         Returns:
             Текст системного промпта для генерации профессионального описания строительных работ ИЖС
         """
+        # Сначала проверяем конфигурацию промптов
+        if self.prompt_config_service:
+            prompt = self.prompt_config_service.get_prompt("post_now", "system_prompt")
+            if prompt:
+                return prompt
+        
+        # Дефолтный промпт если не найден в конфигурации
         return """СИСТЕМНЫЙ ПРОМТ ДЛЯ AI CHAT GPT
 Генерация профессионального описания строительных работ ИЖС по фото
 
