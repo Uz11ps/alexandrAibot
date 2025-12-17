@@ -534,10 +534,12 @@ class PostService:
             logger.debug(f"Промпт: {prompt}")
             
             # Генерируем текст поста, передавая описание фото как photos_description
+            # Используем специальный системный промпт для "Опубликовать сейчас"
             logger.info("Генерация текста поста через AI...")
             post_text = await self.ai_service.generate_post_text(
                 prompt=prompt,
-                photos_description=photo_description
+                photos_description=photo_description,
+                use_post_now_prompt=True
             )
             
             logger.info(f"Текст поста сгенерирован (длина: {len(post_text)} символов)")

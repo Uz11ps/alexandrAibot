@@ -2983,7 +2983,8 @@ async def post_now_process_prompt(message: Message, state: FSMContext):
 Пост должен точно отражать то, что изображено на предоставленных медиафайлах."""
                 post_text = await dependencies.ai_service.generate_post_text(
                     prompt=prompt_with_media,
-                    photos_description=combined_description
+                    photos_description=combined_description,
+                    use_post_now_prompt=True
                 )
             else:
                 # Только видео - генерируем пост на основе анализа видео
@@ -2995,7 +2996,8 @@ async def post_now_process_prompt(message: Message, state: FSMContext):
 Пост должен точно отражать то, что показано в предоставленном видео."""
                 post_text = await dependencies.ai_service.generate_post_text(
                     prompt=prompt_with_video,
-                    photos_description=video_description
+                    photos_description=video_description,
+                    use_post_now_prompt=True
                 )
             
             # Применяем очистку и форматирование
@@ -3456,7 +3458,8 @@ async def _generate_post_from_state(message: Message, state: FSMContext):
                 
                 post_text = await dependencies.ai_service.generate_post_text(
                     prompt=prompt_with_media,
-                    photos_description=combined_description
+                    photos_description=combined_description,
+                    use_post_now_prompt=True
                 )
             else:
                 prompt_with_video = f"""{prompt}
@@ -3469,7 +3472,8 @@ async def _generate_post_from_state(message: Message, state: FSMContext):
                 
                 post_text = await dependencies.ai_service.generate_post_text(
                     prompt=prompt_with_video,
-                    photos_description=video_description
+                    photos_description=video_description,
+                    use_post_now_prompt=True
                 )
             
             from services.ai_service import clean_ai_response, markdown_to_html
