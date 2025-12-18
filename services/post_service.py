@@ -549,10 +549,12 @@ class PostService:
             post_text = clean_ai_response(post_text)
             post_text = markdown_to_html(post_text)
             
-            # Проверяем длину поста
-            if len(post_text) > 900:
-                logger.warning(f"Пост превышает 900 символов ({len(post_text)}), обрезаем")
-                post_text = post_text[:900] + "..."
+            # Для "Опубликовать сейчас" НЕ обрезаем пост до 900 символов,
+            # так как структура из 4 абзацев важнее ограничения длины
+            # Проверяем только критическую длину (например, 2000 символов для Telegram)
+            if len(post_text) > 2000:
+                logger.warning(f"Пост превышает 2000 символов ({len(post_text)}), обрезаем")
+                post_text = post_text[:2000] + "..."
             
             return post_text, valid_photo_paths
             
@@ -572,4 +574,18 @@ class PostService:
             Переработанный текст поста
         """
         return await self.ai_service.refine_post(original_post, edits)
+    
+    async def refine_post_now(self, original_post: str, edits: str) -> str:
+        """
+        Перерабатывает пост для функции "Опубликовать сейчас" с учетом правок
+        Сохраняет структуру из 4 абзацев и минимально изменяет текст
+        
+        Args:
+            original_post: Исходный текст поста
+            edits: Требуемые правки
+            
+        Returns:
+            Переработанный текст поста
+        """
+        return await self.ai_service.refine_post_now(original_post, edits)
 

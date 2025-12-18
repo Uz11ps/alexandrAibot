@@ -3004,8 +3004,11 @@ async def post_now_process_prompt(message: Message, state: FSMContext):
             from services.ai_service import clean_ai_response, markdown_to_html
             post_text = clean_ai_response(post_text)
             post_text = markdown_to_html(post_text)
-            if len(post_text) > 900:
-                post_text = post_text[:900] + "..."
+            # Для "Опубликовать сейчас" НЕ обрезаем до 900 символов - структура из 4 абзацев важнее
+            # Проверяем только критическую длину для Telegram (2000 символов)
+            if len(post_text) > 2000:
+                logger.warning(f"Пост превышает 2000 символов ({len(post_text)}), обрезаем")
+                post_text = post_text[:2000] + "..."
             
             photos = []  # Видео будет обработано отдельно при публикации
         else:
@@ -3245,10 +3248,16 @@ async def post_now_edit(callback: CallbackQuery, state: FSMContext):
     # Сохраняем исходный текст и фото в состоянии
     data = await state.get_data()
     photo_path = data.get('generated_photo_path')
+    photo_paths = data.get('generated_photo_paths', [])
+    
+    # Если нет списка фото, используем одно фото
+    if not photo_paths and photo_path:
+        photo_paths = [photo_path]
     
     await state.update_data(
         original_post_text=post_text,
-        original_photo_path=photo_path
+        original_photo_path=photo_path,
+        original_photo_paths=photo_paths  # Сохраняем список фото для функции "Опубликовать сейчас"
     )
     
     # Переходим в состояние ожидания правок (используем существующее состояние)
@@ -3479,8 +3488,11 @@ async def _generate_post_from_state(message: Message, state: FSMContext):
             from services.ai_service import clean_ai_response, markdown_to_html
             post_text = clean_ai_response(post_text)
             post_text = markdown_to_html(post_text)
-            if len(post_text) > 900:
-                post_text = post_text[:900] + "..."
+            # Для "Опубликовать сейчас" НЕ обрезаем до 900 символов - структура из 4 абзацев важнее
+            # Проверяем только критическую длину для Telegram (2000 символов)
+            if len(post_text) > 2000:
+                logger.warning(f"Пост превышает 2000 символов ({len(post_text)}), обрезаем")
+                post_text = post_text[:2000] + "..."
             
             photos = []
         else:
@@ -3717,7 +3729,11 @@ async def process_edits(message: Message, state: FSMContext):
                 parse_mode="HTML"
             )
         elif original_photo_paths:
-            # Это функция "Опубликовать сейчас" - отправляем на повторное согласование
+            # Это функция "Опубликовать сейчас" - используем специальный метод редактирования
+            logger.info("Используем специальный метод редактирования для 'Опубликовать сейчас'")
+            refined_post = await dependencies.post_service.refine_post_now(original_post_text, edits)
+            logger.info(f"Пост 'Опубликовать сейчас' переработан. Новый текст: {len(refined_post)} символов")
+            
             await state.update_data(
                 generated_post_text=refined_post,
                 generated_photo_paths=original_photo_paths,
