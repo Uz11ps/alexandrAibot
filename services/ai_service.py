@@ -1108,7 +1108,11 @@ class AIService:
             Переработанный текст поста
         """
         # Импортируем функции для работы с абзацами
-        from services.text_utils import extract_paragraph_number, find_paragraph_by_keywords, remove_paragraph_programmatically
+        from services.text_utils import (
+            extract_paragraph_number, find_paragraph_by_keywords, 
+            find_paragraphs_by_keywords, remove_paragraph_programmatically,
+            remove_paragraphs_programmatically
+        )
         
         # Разбиваем исходный пост на абзацы
         paragraphs = [p.strip() for p in original_post.split('\n\n') if p.strip()]
@@ -1120,22 +1124,44 @@ class AIService:
         delete_keywords = ['убери', 'удали', 'убрать', 'удалить', 'исключи', 'исключить']
         is_delete_request = any(keyword in edits.lower() for keyword in delete_keywords)
         
-        # Если просят удалить, но номер не указан, пытаемся найти абзац по ключевым словам
-        if is_delete_request and not paragraph_num:
-            # Извлекаем ключевые слова из запроса (убираем слова удаления)
-            keywords = edits.lower()
-            for kw in delete_keywords:
-                keywords = keywords.replace(kw, '')
-            keywords = keywords.replace('блок', '').replace('абзац', '').replace('пожалуйста', '').strip()
-            
-            if keywords:
-                paragraph_num = find_paragraph_by_keywords(original_post, keywords)
+        # Проверяем, просят ли удалить несколько абзацев (есть кавычки или несколько блоков)
+        is_multiple_delete = False
+        paragraph_nums_to_delete = []
         
-        # Если это запрос на удаление и мы нашли абзац - удаляем программно без AI
-        if is_delete_request and paragraph_num:
-            logger.info(f"Удаление {paragraph_num}-го абзаца программно (без AI)")
-            result = remove_paragraph_programmatically(original_post, paragraph_num)
-            logger.info(f"Абзац удален программно. Исходная длина: {len(original_post)}, новая длина: {len(result)}")
+        if is_delete_request:
+            # Извлекаем ключевые слова из запроса
+            keywords_text = edits.lower()
+            for kw in delete_keywords:
+                keywords_text = keywords_text.replace(kw, '')
+            keywords_text = keywords_text.replace('блок', '').replace('абзац', '').replace('пожалуйста', '').replace('блоки', '').strip()
+            
+            # Пытаемся найти несколько блоков (в кавычках или разделенных запятыми/переносами)
+            import re
+            # Ищем текст в кавычках
+            quoted_texts = re.findall(r'["""]([^"""]+)["""]', edits)
+            if quoted_texts:
+                # Найдены тексты в кавычках - ищем абзацы по ним
+                paragraph_nums_to_delete = find_paragraphs_by_keywords(original_post, quoted_texts)
+                is_multiple_delete = len(paragraph_nums_to_delete) > 1
+            else:
+                # Пытаемся разбить по запятым или другим разделителям
+                parts = [p.strip() for p in re.split(r'[,\n]', keywords_text) if p.strip()]
+                if len(parts) > 1:
+                    paragraph_nums_to_delete = find_paragraphs_by_keywords(original_post, parts)
+                    is_multiple_delete = len(paragraph_nums_to_delete) > 1
+                else:
+                    # Один блок
+                    if keywords_text:
+                        found_num = find_paragraph_by_keywords(original_post, keywords_text)
+                        if found_num:
+                            paragraph_nums_to_delete = [found_num]
+                            paragraph_num = found_num
+        
+        # Если это запрос на удаление и мы нашли абзац(ы) - удаляем программно без AI
+        if is_delete_request and paragraph_nums_to_delete:
+            logger.info(f"Удаление абзацев {paragraph_nums_to_delete} программно (без AI)")
+            result = remove_paragraphs_programmatically(original_post, paragraph_nums_to_delete)
+            logger.info(f"Абзацы удалены программно. Исходная длина: {len(original_post)}, новая длина: {len(result)}")
             return result
         
         # Используем промпт "Опубликовать сейчас" для редактирования
@@ -1284,7 +1310,8 @@ class AIService:
                         {"role": "user", "content": prompt}
                     ],
                     temperature=0.0,  # Нулевая температура для максимальной точности и минимальных изменений
-                    max_tokens=3500  # Больше токенов для сохранения структуры
+                    max_tokens=4000,  # Больше токенов для сохранения структуры
+                    top_p=0.1  # Очень низкий top_p для детерминированности
                 ),
                 timeout=180.0 if self.proxy_enabled else 60.0
             )
