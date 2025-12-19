@@ -1162,6 +1162,8 @@ class AIService:
             logger.info(f"Удаление абзацев {paragraph_nums_to_delete} программно (без AI)")
             result = remove_paragraphs_programmatically(original_post, paragraph_nums_to_delete)
             logger.info(f"Абзацы удалены программно. Исходная длина: {len(original_post)}, новая длина: {len(result)}")
+            # Конвертируем markdown в HTML на всякий случай
+            result = markdown_to_html(result)
             return result
         
         # Используем промпт "Опубликовать сейчас" для редактирования
@@ -1276,10 +1278,10 @@ class AIService:
 
 Верни весь пост целиком: все {len(paragraphs)} абзацев в том же порядке, где изменен только АБЗАЦ {paragraph_num}."""
             else:
-                # Для общих правок показываем каждый абзац отдельно
+                # Для общих правок показываем каждый абзац отдельно с четким указанием что НЕ менять
                 paragraphs_list = []
                 for i, para in enumerate(paragraphs, 1):
-                    paragraphs_list.append(f"АБЗАЦ {i}:\n{para}")
+                    paragraphs_list.append(f"АБЗАЦ {i} (НЕ МЕНЯТЬ БЕЗ УКАЗАНИЯ):\n{para}")
                 
                 prompt = f"""Вот исходный пост (структура из {len(paragraphs)} абзацев):
 
@@ -1288,17 +1290,19 @@ class AIService:
 Руководитель просит внести следующие правки:
 {edits}
 
-КРИТИЧЕСКИ ВАЖНО:
-- Сохрани структуру из {len(paragraphs)} абзацев
-- Минимально изменяй текст - только то, что требуется в правках
-- НЕ переписывай весь пост заново
-- НЕ добавляй эмодзи если их не было в оригинале
-- НЕ меняй стиль текста
-- НЕ меняй формулировки если это не требуется в правках
-- Сохрани стиль и содержание исходного текста
-- Если просят добавить абзац о частых ошибках, добавь его как третий абзац (АБЗАЦ 3)
-- Если просят изменить что-то конкретное, измени только это, остальное оставь БЕЗ ИЗМЕНЕНИЙ - скопируй точно как в оригинале
-- Если правки не касаются какого-то абзаца, оставь его ТОЧНО как в оригинале"""
+КРИТИЧЕСКИ ВАЖНО - ТЫ ДОЛЖЕН:
+1. Сохранить структуру из {len(paragraphs)} абзацев
+2. Изменить ТОЛЬКО то, что указано в правках выше
+3. Все абзацы, которые НЕ упомянуты в правках, скопировать ТОЧНО как в оригинале - БЕЗ ИЗМЕНЕНИЙ, слово в слово
+4. НЕ переписывать весь пост заново
+5. НЕ добавлять эмодзи если их не было в оригинале
+6. НЕ менять стиль текста
+7. НЕ менять формулировки если это не требуется в правках
+8. Сохранить стиль и содержание исходного текста
+9. Если просят добавить абзац о частых ошибках, добавить его как третий абзац (АБЗАЦ 3)
+10. Если правки не касаются какого-то абзаца, оставить его ТОЧНО как в оригинале - слово в слово
+
+Верни весь пост целиком, где изменены ТОЛЬКО те части, которые указаны в правках."""
             
             logger.info(f"Переработка поста 'Опубликовать сейчас'. Исходная длина: {len(original_post)} символов. Правки: {edits}")
             
@@ -1321,10 +1325,49 @@ class AIService:
             # Очищаем от комментариев AI
             refined_text = clean_ai_response(refined_text)
             
+            # Проверяем, что текст не изменился слишком сильно (для редактирования, не удаления)
+            if not is_delete_request:
+                original_length = len(original_post)
+                new_length = len(refined_text)
+                length_diff = abs(original_length - new_length) / original_length if original_length > 0 else 0
+                
+                # Если текст изменился более чем на 30%, это подозрительно
+                if length_diff > 0.3:
+                    logger.warning(f"Подозрительно большое изменение текста: {length_diff*100:.1f}% (было {original_length}, стало {new_length})")
+                
+                # Проверяем количество абзацев
+                original_para_count = len([p for p in original_post.split('\n\n') if p.strip()])
+                new_para_count = len([p for p in refined_text.split('\n\n') if p.strip()])
+                
+                if paragraph_num and new_para_count != original_para_count:
+                    logger.warning(f"Изменено количество абзацев: было {original_para_count}, стало {new_para_count}")
+                
+                # Проверяем наличие эмодзи в оригинале и новом тексте
+                import re
+                emoji_pattern = re.compile("["
+                    u"\U0001F600-\U0001F64F"  # emoticons
+                    u"\U0001F300-\U0001F5FF"  # symbols & pictographs
+                    u"\U0001F680-\U0001F6FF"  # transport & map symbols
+                    u"\U0001F1E0-\U0001F1FF"  # flags
+                    u"\U00002702-\U000027B0"
+                    u"\U000024C2-\U0001F251"
+                    "]+", flags=re.UNICODE)
+                
+                original_emojis = len(emoji_pattern.findall(original_post))
+                new_emojis = len(emoji_pattern.findall(refined_text))
+                
+                if original_emojis == 0 and new_emojis > 0:
+                    logger.warning(f"Добавлены эмодзи в текст, хотя в оригинале их не было: {new_emojis}. Удаляю эмодзи.")
+                    # Удаляем эмодзи если их не было в оригинале
+                    refined_text = emoji_pattern.sub('', refined_text).strip()
+                    # Убираем лишние пробелы после удаления эмодзи
+                    refined_text = re.sub(r'\s+', ' ', refined_text)
+                    refined_text = re.sub(r'\n\s*\n', '\n\n', refined_text)
+            
             # Конвертируем markdown в HTML
             refined_text = markdown_to_html(refined_text)
             
-            logger.info(f"Пост 'Опубликовать сейчас' переработан. Новая длина: {len(refined_text)} символов")
+            logger.info(f"Пост 'Опубликовать сейчас' переработан. Исходная длина: {len(original_post)}, новая длина: {len(refined_text)} символов")
             
             return refined_text
         

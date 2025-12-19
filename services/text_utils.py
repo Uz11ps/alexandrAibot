@@ -111,6 +111,67 @@ def extract_paragraph_number(edits: str) -> Optional[int]:
     return None
 
 
+def find_paragraphs_by_keywords(text: str, keywords_list: list[str]) -> list[int]:
+    """
+    Находит номера абзацев по списку ключевых слов (для удаления нескольких абзацев)
+    
+    Args:
+        text: Исходный текст поста
+        keywords_list: Список ключевых фраз для поиска абзацев
+        
+    Returns:
+        Список номеров абзацев (1-based)
+    """
+    paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
+    found_indices = []
+    
+    for keywords in keywords_list:
+        keywords_lower = keywords.lower().strip()
+        if not keywords_lower:
+            continue
+            
+        # Специальные паттерны для поиска
+        if 'техническ' in keywords_lower or 'аспект' in keywords_lower or 'норм' in keywords_lower or 'снип' in keywords_lower:
+            for i, para in enumerate(paragraphs, 1):
+                para_lower = para.lower()
+                if ('техническ' in para_lower or 'норм' in para_lower or 'снип' in para_lower or 'гост' in para_lower) and (i) not in found_indices:
+                    found_indices.append(i)
+                    break
+        
+        elif 'ошибк' in keywords_lower:
+            for i, para in enumerate(paragraphs, 1):
+                para_lower = para.lower()
+                if ('ошибк' in para_lower or 'част' in para_lower) and (i) not in found_indices:
+                    found_indices.append(i)
+                    break
+        
+        elif 'однако' in keywords_lower or 'сталкиваемся' in keywords_lower:
+            for i, para in enumerate(paragraphs, 1):
+                para_lower = para.lower()
+                if ('однако' in para_lower or 'сталкиваемся' in para_lower) and (i) not in found_indices:
+                    found_indices.append(i)
+                    break
+        
+        elif 'работаем строго' in keywords_lower or 'снип' in keywords_lower or 'норматив' in keywords_lower:
+            for i, para in enumerate(paragraphs, 1):
+                para_lower = para.lower()
+                if ('работаем строго' in para_lower or 'снип' in para_lower or 'норматив' in para_lower) and (i) not in found_indices:
+                    found_indices.append(i)
+                    break
+        
+        else:
+            # Общий поиск по ключевым словам
+            keyword_words = [kw.strip() for kw in keywords_lower.split() if len(kw.strip()) > 2]
+            for i, para in enumerate(paragraphs, 1):
+                para_lower = para.lower()
+                matches = sum(1 for kw in keyword_words if kw in para_lower)
+                if matches >= max(1, len(keyword_words) * 0.5) and (i) not in found_indices:
+                    found_indices.append(i)
+                    break
+    
+    return sorted(set(found_indices))
+
+
 def find_paragraph_by_keywords(text: str, keywords: str) -> Optional[int]:
     """
     Находит номер абзаца по ключевым словам
@@ -152,6 +213,28 @@ def find_paragraph_by_keywords(text: str, keywords: str) -> Optional[int]:
     return None
 
 
+def remove_paragraphs_programmatically(text: str, paragraph_nums: list[int]) -> str:
+    """
+    Программно удаляет указанные абзацы из текста
+    
+    Args:
+        text: Исходный текст
+        paragraph_nums: Список номеров абзацев для удаления (1-based), отсортированный по убыванию
+        
+    Returns:
+        Текст без удаленных абзацев
+    """
+    paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
+    
+    # Удаляем абзацы в обратном порядке, чтобы индексы не сдвигались
+    for para_num in sorted(paragraph_nums, reverse=True):
+        if 1 <= para_num <= len(paragraphs):
+            paragraphs.pop(para_num - 1)
+    
+    # Собираем обратно
+    return '\n\n'.join(paragraphs)
+
+
 def remove_paragraph_programmatically(text: str, paragraph_num: int) -> str:
     """
     Программно удаляет указанный абзац из текста
@@ -163,14 +246,5 @@ def remove_paragraph_programmatically(text: str, paragraph_num: int) -> str:
     Returns:
         Текст без удаленного абзаца
     """
-    paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
-    
-    if paragraph_num < 1 or paragraph_num > len(paragraphs):
-        return text  # Возвращаем оригинал если номер некорректный
-    
-    # Удаляем указанный абзац
-    paragraphs.pop(paragraph_num - 1)
-    
-    # Собираем обратно
-    return '\n\n'.join(paragraphs)
+    return remove_paragraphs_programmatically(text, [paragraph_num])
 
