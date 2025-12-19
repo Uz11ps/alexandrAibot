@@ -3743,6 +3743,9 @@ async def process_edits(message: Message, state: FSMContext):
     if not original_photo_paths and original_photo_path:
         original_photo_paths = [original_photo_path]
     
+    # Логируем данные состояния для отладки
+    logger.info(f"Данные состояния для редактирования: day_of_week={day_of_week}, original_photo_paths={original_photo_paths}, original_photo_path={original_photo_path}")
+    
     if not original_post_text:
         await message.answer("Не удалось найти исходный текст поста. Попробуйте создать пост заново.")
         await safe_clear_state(state)
@@ -3765,16 +3768,18 @@ async def process_edits(message: Message, state: FSMContext):
         # Определяем, какой метод использовать для редактирования
         is_post_now = bool(original_photo_paths)  # Если есть original_photo_paths, это "Опубликовать сейчас"
         
+        logger.info(f"Определение метода редактирования: is_post_now={is_post_now}, original_photo_paths={original_photo_paths}, len={len(original_photo_paths) if original_photo_paths else 0}")
+        
         if is_post_now:
             # Для "Опубликовать сейчас" используем специальный метод БЕЗ предварительного вызова refine_post
-            logger.info(f"Используем специальный метод редактирования для 'Опубликовать сейчас' (исходный текст: {len(original_post_text)} символов)")
+            logger.info(f"✅ Используем специальный метод редактирования для 'Опубликовать сейчас' (исходный текст: {len(original_post_text)} символов)")
             refined_post = await dependencies.post_service.refine_post_now(original_post_text, edits)
-            logger.info(f"Пост 'Опубликовать сейчас' переработан. Новый текст: {len(refined_post)} символов")
+            logger.info(f"✅ Пост 'Опубликовать сейчас' переработан. Новый текст: {len(refined_post)} символов")
         else:
             # Для обычных черновиков и запланированных постов используем стандартный метод
-            logger.info(f"Переработка поста. Исходный текст: {len(original_post_text)} символов. Правки: {edits}")
+            logger.info(f"📝 Переработка обычного поста. Исходный текст: {len(original_post_text)} символов. Правки: {edits}")
             refined_post = await dependencies.post_service.refine_post(original_post_text, edits)
-            logger.info(f"Пост переработан. Новый текст: {len(refined_post)} символов")
+            logger.info(f"📝 Пост переработан. Новый текст: {len(refined_post)} символов")
         
         # Если это запланированный пост, обновляем его
         if day_of_week and dependencies.scheduled_posts_service:
