@@ -126,13 +126,51 @@ def find_paragraph_by_keywords(text: str, keywords: str) -> Optional[int]:
     keywords_lower = keywords.lower()
     
     # Разбиваем ключевые слова
-    keyword_list = [kw.strip() for kw in keywords_lower.split()]
+    keyword_list = [kw.strip() for kw in keywords_lower.split() if len(kw.strip()) > 2]
     
+    # Специальные паттерны для поиска
+    if 'техническ' in keywords_lower or 'аспект' in keywords_lower or 'норм' in keywords_lower:
+        for i, para in enumerate(paragraphs, 1):
+            para_lower = para.lower()
+            if 'техническ' in para_lower or 'норм' in para_lower or 'снип' in para_lower or 'гост' in para_lower:
+                return i
+    
+    if 'ошибк' in keywords_lower:
+        for i, para in enumerate(paragraphs, 1):
+            para_lower = para.lower()
+            if 'ошибк' in para_lower or 'част' in para_lower:
+                return i
+    
+    # Общий поиск по ключевым словам
     for i, para in enumerate(paragraphs, 1):
         para_lower = para.lower()
         # Проверяем, содержатся ли ключевые слова в абзаце
-        if any(kw in para_lower for kw in keyword_list if len(kw) > 3):  # Игнорируем короткие слова
+        matches = sum(1 for kw in keyword_list if kw in para_lower)
+        if matches >= len(keyword_list) * 0.5:  # Хотя бы половина ключевых слов
             return i
     
     return None
+
+
+def remove_paragraph_programmatically(text: str, paragraph_num: int) -> str:
+    """
+    Программно удаляет указанный абзац из текста
+    
+    Args:
+        text: Исходный текст
+        paragraph_num: Номер абзаца для удаления (1-based)
+        
+    Returns:
+        Текст без удаленного абзаца
+    """
+    paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
+    
+    if paragraph_num < 1 or paragraph_num > len(paragraphs):
+        return text  # Возвращаем оригинал если номер некорректный
+    
+    # Удаляем указанный абзац
+    paragraphs.pop(paragraph_num - 1)
+    
+    # Собираем обратно
+    return '\n\n'.join(paragraphs)
 
