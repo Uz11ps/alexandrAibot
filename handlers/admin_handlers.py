@@ -3762,10 +3762,19 @@ async def process_edits(message: Message, state: FSMContext):
     try:
         await message.answer("⏳ Перерабатываю пост с учетом ваших правок...")
         
-        # Перерабатываем пост через AI
-        logger.info(f"Переработка поста. Исходный текст: {len(original_post_text)} символов. Правки: {edits}")
-        refined_post = await dependencies.post_service.refine_post(original_post_text, edits)
-        logger.info(f"Пост переработан. Новый текст: {len(refined_post)} символов")
+        # Определяем, какой метод использовать для редактирования
+        is_post_now = bool(original_photo_paths)  # Если есть original_photo_paths, это "Опубликовать сейчас"
+        
+        if is_post_now:
+            # Для "Опубликовать сейчас" используем специальный метод БЕЗ предварительного вызова refine_post
+            logger.info(f"Используем специальный метод редактирования для 'Опубликовать сейчас' (исходный текст: {len(original_post_text)} символов)")
+            refined_post = await dependencies.post_service.refine_post_now(original_post_text, edits)
+            logger.info(f"Пост 'Опубликовать сейчас' переработан. Новый текст: {len(refined_post)} символов")
+        else:
+            # Для обычных черновиков и запланированных постов используем стандартный метод
+            logger.info(f"Переработка поста. Исходный текст: {len(original_post_text)} символов. Правки: {edits}")
+            refined_post = await dependencies.post_service.refine_post(original_post_text, edits)
+            logger.info(f"Пост переработан. Новый текст: {len(refined_post)} символов")
         
         # Если это запланированный пост, обновляем его
         if day_of_week and dependencies.scheduled_posts_service:
@@ -3793,11 +3802,8 @@ async def process_edits(message: Message, state: FSMContext):
                 reply_markup=get_main_menu_keyboard(),
                 parse_mode="HTML"
             )
-        elif original_photo_paths:
-            # Это функция "Опубликовать сейчас" - используем специальный метод редактирования
-            logger.info("Используем специальный метод редактирования для 'Опубликовать сейчас'")
-            refined_post = await dependencies.post_service.refine_post_now(original_post_text, edits)
-            logger.info(f"Пост 'Опубликовать сейчас' переработан. Новый текст: {len(refined_post)} символов")
+        elif is_post_now:
+            # Это функция "Опубликовать сейчас" - refined_post уже получен выше
             
             # Обновляем историю с успешным результатом
             if dependencies.post_history_service and request_id:
