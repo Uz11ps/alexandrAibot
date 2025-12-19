@@ -3751,12 +3751,19 @@ async def process_edits(message: Message, state: FSMContext):
     original_photo_paths = data.get('original_photo_paths', [])  # Для функции "Опубликовать сейчас"
     original_photo_path = data.get('original_photo_path')  # Для обратной совместимости
     
+    # ВАЖНО: Также проверяем generated_photo_paths (для повторных редактирований "Опубликовать сейчас")
+    if not original_photo_paths:
+        generated_photo_paths = data.get('generated_photo_paths', [])
+        if generated_photo_paths:
+            original_photo_paths = generated_photo_paths
+            logger.info(f"Использованы generated_photo_paths для определения 'Опубликовать сейчас': {original_photo_paths}")
+    
     # Если нет списка фото, используем одно фото
     if not original_photo_paths and original_photo_path:
         original_photo_paths = [original_photo_path]
     
     # Логируем данные состояния для отладки
-    logger.info(f"Данные состояния для редактирования: day_of_week={day_of_week}, original_photo_paths={original_photo_paths}, original_photo_path={original_photo_path}")
+    logger.info(f"Данные состояния для редактирования: day_of_week={day_of_week}, original_photo_paths={original_photo_paths}, original_photo_path={original_photo_path}, generated_photo_paths={data.get('generated_photo_paths', [])}")
     
     if not original_post_text:
         await message.answer("Не удалось найти исходный текст поста. Попробуйте создать пост заново.")
