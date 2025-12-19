@@ -152,10 +152,17 @@ def find_paragraphs_by_keywords(text: str, keywords_list: list[str]) -> list[int
                     found_indices.append(i)
                     break
         
-        elif 'работаем строго' in keywords_lower or 'снип' in keywords_lower or 'норматив' in keywords_lower:
+        elif 'работаем строго' in keywords_lower or ('снип' in keywords_lower and 'работаем' in keywords_lower):
             for i, para in enumerate(paragraphs, 1):
                 para_lower = para.lower()
-                if ('работаем строго' in para_lower or 'снип' in para_lower or 'норматив' in para_lower) and (i) not in found_indices:
+                if ('работаем строго' in para_lower or ('работаем' in para_lower and 'снип' in para_lower)) and (i) not in found_indices:
+                    found_indices.append(i)
+                    break
+        
+        elif 'потолок' in keywords_lower or 'балк' in keywords_lower or 'деревянн' in keywords_lower:
+            for i, para in enumerate(paragraphs, 1):
+                para_lower = para.lower()
+                if ('потолок' in para_lower or 'балк' in para_lower or 'деревянн' in para_lower) and (i) not in found_indices:
                     found_indices.append(i)
                     break
         
@@ -202,12 +209,24 @@ def find_paragraph_by_keywords(text: str, keywords: str) -> Optional[int]:
             if 'ошибк' in para_lower or 'част' in para_lower:
                 return i
     
+    if 'потолок' in keywords_lower or 'балк' in keywords_lower or 'деревянн' in keywords_lower:
+        for i, para in enumerate(paragraphs, 1):
+            para_lower = para.lower()
+            if 'потолок' in para_lower or 'балк' in para_lower or 'деревянн' in para_lower:
+                return i
+    
+    if 'работаем строго' in keywords_lower or ('снип' in keywords_lower and 'работаем' in keywords_lower):
+        for i, para in enumerate(paragraphs, 1):
+            para_lower = para.lower()
+            if 'работаем строго' in para_lower or ('работаем' in para_lower and 'снип' in para_lower):
+                return i
+    
     # Общий поиск по ключевым словам
     for i, para in enumerate(paragraphs, 1):
         para_lower = para.lower()
         # Проверяем, содержатся ли ключевые слова в абзаце
         matches = sum(1 for kw in keyword_list if kw in para_lower)
-        if matches >= len(keyword_list) * 0.5:  # Хотя бы половина ключевых слов
+        if matches >= max(1, len(keyword_list) * 0.5):  # Хотя бы половина ключевых слов или хотя бы одно
             return i
     
     return None
