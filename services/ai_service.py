@@ -1107,8 +1107,8 @@ class AIService:
         Returns:
             Переработанный текст поста
         """
-        # Импортируем функцию для извлечения номера абзаца
-        from services.text_utils import extract_paragraph_number
+        # Импортируем функции для работы с абзацами
+        from services.text_utils import extract_paragraph_number, find_paragraph_by_keywords
         
         # Разбиваем исходный пост на абзацы
         paragraphs = [p.strip() for p in original_post.split('\n\n') if p.strip()]
@@ -1119,6 +1119,17 @@ class AIService:
         # Проверяем, просят ли удалить абзац
         delete_keywords = ['убери', 'удали', 'убрать', 'удалить', 'исключи', 'исключить']
         is_delete_request = any(keyword in edits.lower() for keyword in delete_keywords)
+        
+        # Если просят удалить, но номер не указан, пытаемся найти абзац по ключевым словам
+        if is_delete_request and not paragraph_num:
+            # Извлекаем ключевые слова из запроса (убираем слова удаления)
+            keywords = edits.lower()
+            for kw in delete_keywords:
+                keywords = keywords.replace(kw, '')
+            keywords = keywords.replace('блок', '').replace('абзац', '').strip()
+            
+            if keywords:
+                paragraph_num = find_paragraph_by_keywords(original_post, keywords)
         
         # Используем промпт "Опубликовать сейчас" для редактирования
         system_prompt = self._get_post_now_system_prompt()
@@ -1153,22 +1164,50 @@ class AIService:
 - Верни пост БЕЗ удаленного абзаца, остальное оставь как есть"""
             elif is_delete_request:
                 # Определяем какой абзац удалить по ключевым словам
-                delete_paragraph_text = ""
-                for i, para in enumerate(paragraphs, 1):
-                    if any(keyword in edits.lower() for keyword in ['частые ошибки', 'ошибки', 'ошибка']):
-                        if 'ошибк' in para.lower():
-                            delete_paragraph_text = f"{i}-й абзац (про ошибки)"
-                            break
+                if paragraph_num:
+                    delete_info = f"{paragraph_num}-й абзац"
+                else:
+                    # Пытаемся найти по ключевым словам
+                    delete_info = "указанный абзац"
+                    for i, para in enumerate(paragraphs, 1):
+                        if any(keyword in edits.lower() for keyword in ['частые ошибки', 'ошибки', 'ошибка']):
+                            if 'ошибк' in para.lower():
+                                paragraph_num = i
+                                delete_info = f"{i}-й абзац (про ошибки)"
+                                break
+                        elif 'технические аспекты' in edits.lower() or 'техническ' in edits.lower():
+                            if 'техническ' in para.lower() or 'норм' in para.lower() or 'снип' in para.lower():
+                                paragraph_num = i
+                                delete_info = f"{i}-й абзац (технические аспекты)"
+                                break
                 
-                prompt = f"""Вот исходный пост (структура из 4 абзацев):
+                if paragraph_num:
+                    prompt = f"""Вот исходный пост (структура из {len(paragraphs)} абзацев):
 {original_post}
 
-Руководитель просит УДАЛИТЬ абзац про частые ошибки:
+Руководитель просит УДАЛИТЬ {delete_info}:
+{edits}
+
+КРИТИЧЕСКИ ВАЖНО - ТЫ ДОЛЖЕН:
+1. УДАЛИТЬ ТОЛЬКО {paragraph_num}-й абзац
+2. Остальные абзацы скопировать ТОЧНО как в оригинале - БЕЗ ИЗМЕНЕНИЙ
+3. НЕ переписывать текст
+4. НЕ добавлять эмодзи
+5. НЕ менять стиль
+6. НЕ менять формулировки
+7. Просто убери {paragraph_num}-й абзац и верни остальные как есть
+
+Верни пост БЕЗ удаленного абзаца, остальное оставь ТОЧНО как в оригинале."""
+                else:
+                    prompt = f"""Вот исходный пост (структура из {len(paragraphs)} абзацев):
+{original_post}
+
+Руководитель просит УДАЛИТЬ указанный абзац:
 {edits}
 
 КРИТИЧЕСКИ ВАЖНО:
 - Остальные абзацы должны остаться БЕЗ ИЗМЕНЕНИЙ - скопируй их точно как в оригинале
-- Просто убери абзац про частые ошибки (обычно это 3-й абзац)
+- Просто убери указанный абзац
 - НЕ переписывай текст
 - НЕ добавляй эмодзи
 - НЕ меняй стиль
@@ -1215,7 +1254,7 @@ class AIService:
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": prompt}
                     ],
-                    temperature=0.1,  # Очень низкая температура для минимальных изменений
+                    temperature=0.0 if is_delete_request else 0.1,  # Нулевая температура для удаления, очень низкая для редактирования
                     max_tokens=3000  # Больше токенов для сохранения структуры
                 ),
                 timeout=180.0 if self.proxy_enabled else 60.0

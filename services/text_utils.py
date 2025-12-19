@@ -110,3 +110,29 @@ def extract_paragraph_number(edits: str) -> Optional[int]:
     
     return None
 
+
+def find_paragraph_by_keywords(text: str, keywords: str) -> Optional[int]:
+    """
+    Находит номер абзаца по ключевым словам
+    
+    Args:
+        text: Исходный текст поста
+        keywords: Ключевые слова для поиска абзаца
+        
+    Returns:
+        Номер абзаца (1-based) или None если не найден
+    """
+    paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
+    keywords_lower = keywords.lower()
+    
+    # Разбиваем ключевые слова
+    keyword_list = [kw.strip() for kw in keywords_lower.split()]
+    
+    for i, para in enumerate(paragraphs, 1):
+        para_lower = para.lower()
+        # Проверяем, содержатся ли ключевые слова в абзаце
+        if any(kw in para_lower for kw in keyword_list if len(kw) > 3):  # Игнорируем короткие слова
+            return i
+    
+    return None
+
