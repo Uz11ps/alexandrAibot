@@ -12,6 +12,8 @@ from services.source_service import SourceService
 from services.source_parser_service import SourceParserService
 from services.scheduled_posts_service import ScheduledPostsService
 from services.prompt_config_service import PromptConfigService
+from services.post_history_service import PostHistoryService
+from services.notification_settings_service import NotificationSettingsService
 
 # Глобальные экземпляры сервисов
 ai_service: Optional[AIService] = None
@@ -26,6 +28,8 @@ source_service: Optional[SourceService] = None
 source_parser_service: Optional[SourceParserService] = None
 scheduled_posts_service: Optional[ScheduledPostsService] = None
 prompt_config_service: Optional[PromptConfigService] = None
+post_history_service: Optional[PostHistoryService] = None
+notification_settings_service: Optional[NotificationSettingsService] = None
 
 
 def init_services(bot, telegram_service_instance: TelegramService):
@@ -33,6 +37,7 @@ def init_services(bot, telegram_service_instance: TelegramService):
     global ai_service, file_service, telegram_service, vk_service
     global post_service, scheduler_service, employee_service, google_drive_service
     global source_service, source_parser_service, scheduled_posts_service, prompt_config_service
+    global post_history_service, notification_settings_service
     
     # Инициализируем сервис промптов первым
     prompt_config_service = PromptConfigService()
@@ -58,4 +63,6 @@ def init_services(bot, telegram_service_instance: TelegramService):
     source_service = SourceService()
     source_parser_service = SourceParserService(vk_service=vk_service)
     scheduled_posts_service = ScheduledPostsService()
+    post_history_service = PostHistoryService()
+    notification_settings_service = NotificationSettingsService()
 

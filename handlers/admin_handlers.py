@@ -40,6 +40,9 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="✏️ Редактировать промпты", callback_data="menu_prompts")
         ],
         [
+            InlineKeyboardButton(text="⚙️ Настройки уведомлений", callback_data="menu_notifications")
+        ],
+        [
             InlineKeyboardButton(text="🚀 Опубликовать сейчас", callback_data="post_now")
         ],
         [
@@ -388,6 +391,115 @@ async def test_notifications(callback: CallbackQuery):
     ])
     
     await callback.message.answer(result_text, reply_markup=keyboard, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "menu_notifications")
+async def menu_notifications(callback: CallbackQuery):
+    """Меню настроек уведомлений"""
+    if not is_admin(callback.from_user.id):
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
+        return
+    
+    if not dependencies.notification_settings_service:
+        await safe_answer_callback(callback, "Сервис недоступен", show_alert=True)
+        return
+    
+    draft_enabled = dependencies.notification_settings_service.is_draft_notifications_enabled()
+    status_icon = "✅" if draft_enabled else "❌"
+    status_text = "включены" if draft_enabled else "отключены"
+    
+    text = (
+        f"⚙️ <b>Настройки уведомлений</b>\n\n"
+        f"📝 Уведомления о черновиках: {status_icon} {status_text.capitalize()}\n\n"
+        f"Выберите действие:"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text=f"{'❌ Отключить' if draft_enabled else '✅ Включить'} уведомления о черновиках",
+                callback_data="toggle_draft_notifications"
+            )
+        ],
+        [
+            InlineKeyboardButton(text="📜 История запросов", callback_data="menu_post_history")
+        ],
+        [
+            InlineKeyboardButton(text="◀️ Назад", callback_data="menu_back")
+        ]
+    ])
+    
+    await safe_edit_message(callback, text, reply_markup=keyboard)
+    await safe_answer_callback(callback)
+
+
+@router.callback_query(F.data == "toggle_draft_notifications")
+async def toggle_draft_notifications(callback: CallbackQuery):
+    """Переключает уведомления о черновиках"""
+    if not is_admin(callback.from_user.id):
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
+        return
+    
+    if not dependencies.notification_settings_service:
+        await safe_answer_callback(callback, "Сервис недоступен", show_alert=True)
+        return
+    
+    current_status = dependencies.notification_settings_service.is_draft_notifications_enabled()
+    new_status = not current_status
+    dependencies.notification_settings_service.set_draft_notifications(new_status)
+    
+    status_text = "включены" if new_status else "отключены"
+    await safe_answer_callback(callback, f"Уведомления о черновиках {status_text}")
+    
+    # Обновляем меню
+    await menu_notifications(callback)
+
+
+@router.callback_query(F.data == "menu_post_history")
+async def menu_post_history(callback: CallbackQuery):
+    """Показывает историю запросов постов"""
+    if not is_admin(callback.from_user.id):
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
+        return
+    
+    if not dependencies.post_history_service:
+        await safe_answer_callback(callback, "Сервис недоступен", show_alert=True)
+        return
+    
+    history = dependencies.post_history_service.get_history(limit=20)
+    
+    if not history:
+        history_text = "📜 <b>История запросов постов</b>\n\nИстория пуста."
+    else:
+        history_list = []
+        for req in reversed(history[-10:]):  # Последние 10
+            created_at = datetime.fromisoformat(req.created_at)
+            status_icon = "✅" if req.status == "completed" else "⏳" if req.status == "pending" else "❌"
+            type_name = {
+                "generate": "Генерация",
+                "edit": "Редактирование",
+                "publish_now": "Опубликовать сейчас"
+            }.get(req.request_type, req.request_type)
+            
+            prompt_preview = req.prompt[:50] + "..." if len(req.prompt) > 50 else req.prompt
+            
+            history_list.append(
+                f"{status_icon} <b>{type_name}</b>\n"
+                f"📝 {prompt_preview}\n"
+                f"🕐 {created_at.strftime('%d.%m %H:%M')}"
+            )
+        
+        history_text = (
+            f"📜 <b>История запросов постов</b> (последние {len(history_list)})\n\n"
+            f"{chr(10).join(history_list)}"
+        )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="menu_notifications")]
+    ])
+    
+    await safe_edit_message(callback, history_text, reply_markup=keyboard)
+    await safe_answer_callback(callback)
 
 
 @router.callback_query(F.data == "menu_upload")
@@ -1892,6 +2004,17 @@ async def process_edits(message: Message, state: FSMContext):
         await safe_clear_state(state)
         return
     
+    # Сохраняем запрос на редактирование в историю
+    request_id = None
+    if dependencies.post_history_service:
+        request_id = dependencies.post_history_service.add_request(
+            admin_id=message.from_user.id,
+            request_type="edit",
+            prompt=edits,
+            original_post=original_post_text,
+            photos_count=len(original_photos) + len(original_photo_paths)
+        )
+    
     try:
         await message.answer("⏳ Перерабатываю пост с учетом ваших правок...")
         
@@ -1899,6 +2022,14 @@ async def process_edits(message: Message, state: FSMContext):
         logger.info(f"Переработка поста. Исходный текст: {len(original_post_text)} символов. Правки: {edits}")
         refined_post = await dependencies.post_service.refine_post(original_post_text, edits)
         logger.info(f"Пост переработан. Новый текст: {len(refined_post)} символов")
+        
+        # Обновляем историю с успешным результатом
+        if dependencies.post_history_service and request_id:
+            dependencies.post_history_service.update_request(
+                request_id=request_id,
+                generated_post=refined_post,
+                status="completed"
+            )
         
         # Если это запланированный пост, обновляем его
         if day_of_week and dependencies.scheduled_posts_service:
@@ -3436,6 +3567,18 @@ async def _generate_post_from_state(message: Message, state: FSMContext):
                 logger.error(f"Ошибка при анализе источников: {e}", exc_info=True)
                 sources_context = f"\n\nДополнительные источники для контекста:\n" + "\n".join([f"- {url}" for url in sources])
         
+        # Сохраняем запрос в историю
+        request_id = None
+        if dependencies.post_history_service:
+            request_id = dependencies.post_history_service.add_request(
+                admin_id=message.from_user.id,
+                request_type="publish_now",
+                prompt=prompt,
+                photos_count=len(photo_paths) + len(video_paths)
+            )
+            # Сохраняем request_id в состоянии для обработки ошибок
+            await state.update_data(_current_request_id=request_id)
+        
         # Генерируем пост на основе медиа, промпта и источников
         if has_video:
             video_description = None
@@ -3628,6 +3771,18 @@ async def _generate_post_from_state(message: Message, state: FSMContext):
         
     except Exception as e:
         logger.error(f"Ошибка при генерации поста: {e}", exc_info=True)
+        # Обновляем историю с ошибкой, если request_id был создан
+        try:
+            data = await state.get_data()
+            request_id = data.get('_current_request_id')
+            if dependencies.post_history_service and request_id:
+                dependencies.post_history_service.update_request(
+                    request_id=request_id,
+                    status="failed",
+                    error=str(e)[:500]
+                )
+        except:
+            pass  # Игнорируем ошибки при обновлении истории
         await message.answer(f"❌ Ошибка при генерации поста: {str(e)}")
         await safe_clear_state(state)
 
@@ -3694,6 +3849,17 @@ async def process_edits(message: Message, state: FSMContext):
         await safe_clear_state(state)
         return
     
+    # Сохраняем запрос на редактирование в историю
+    request_id = None
+    if dependencies.post_history_service:
+        request_id = dependencies.post_history_service.add_request(
+            admin_id=message.from_user.id,
+            request_type="edit",
+            prompt=edits,
+            original_post=original_post_text,
+            photos_count=len(original_photos) + len(original_photo_paths)
+        )
+    
     try:
         await message.answer("⏳ Перерабатываю пост с учетом ваших правок...")
         
@@ -3733,6 +3899,14 @@ async def process_edits(message: Message, state: FSMContext):
             logger.info("Используем специальный метод редактирования для 'Опубликовать сейчас'")
             refined_post = await dependencies.post_service.refine_post_now(original_post_text, edits)
             logger.info(f"Пост 'Опубликовать сейчас' переработан. Новый текст: {len(refined_post)} символов")
+            
+            # Обновляем историю с успешным результатом
+            if dependencies.post_history_service and request_id:
+                dependencies.post_history_service.update_request(
+                    request_id=request_id,
+                    generated_post=refined_post,
+                    status="completed"
+                )
             
             await state.update_data(
                 generated_post_text=refined_post,
@@ -3855,6 +4029,13 @@ async def process_edits(message: Message, state: FSMContext):
     
     except Exception as e:
         logger.error(f"Ошибка при переработке поста: {e}", exc_info=True)
+        # Обновляем историю с ошибкой
+        if dependencies.post_history_service and request_id:
+            dependencies.post_history_service.update_request(
+                request_id=request_id,
+                status="failed",
+                error=str(e)[:500]  # Ограничиваем длину ошибки
+            )
         await message.answer(f"❌ Ошибка при переработке поста: {str(e)}")
         await safe_clear_state(state)
 

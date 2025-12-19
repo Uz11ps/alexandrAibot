@@ -4,6 +4,7 @@ from typing import Optional, List
 from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
 from config.settings import settings
+from services.text_utils import truncate_text_by_sentences
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,13 @@ class TelegramService:
         Returns:
             ID первого отправленного сообщения для отслеживания
         """
+        # Проверяем настройки уведомлений
+        from services import dependencies
+        if dependencies.notification_settings_service:
+            if not dependencies.notification_settings_service.is_draft_notifications_enabled():
+                logger.info("Уведомления о черновиках отключены в настройках")
+                return 0
+        
         try:
             # Формируем callback_data для кнопки "Принять" с указанием дня недели
             approve_callback = f"approve_post_{day_of_week}" if day_of_week else "approve_post"
@@ -173,6 +181,8 @@ class TelegramService:
                     else:
                         # Если текст слишком длинный, отправляем фото с коротким caption и текст отдельно
                         # Отправляем фото первым, потом текст
+                        # Обрезаем текст по предложениям, чтобы не обрывать мысль (лимит Telegram для сообщений - 4096)
+                        truncated_text = truncate_text_by_sentences(post_text, 4096)
                         photo_message = await self.bot.send_photo(
                             chat_id=self.channel_id,
                             photo=photo_files[0],
@@ -180,7 +190,7 @@ class TelegramService:
                         )
                         text_message = await self.bot.send_message(
                             chat_id=self.channel_id,
-                            text=post_text,
+                            text=truncated_text,
                             parse_mode="HTML"
                         )
                         message = photo_message  # Возвращаем ID фото сообщения
@@ -203,10 +213,12 @@ class TelegramService:
                     message = messages[0]
                     
                     # Если текст не поместился в caption, отправляем отдельным сообщением
+                    # Обрезаем текст по предложениям, чтобы не обрывать мысль
                     if len(post_text) > MAX_CAPTION_LENGTH:
+                        truncated_text = truncate_text_by_sentences(post_text, 4096)
                         await self.bot.send_message(
                             chat_id=self.channel_id,
-                            text=post_text,
+                            text=truncated_text,
                             parse_mode="HTML"
                         )
             else:
