@@ -1410,6 +1410,55 @@ class AIService:
                     
                     return result
                 
+                elif is_add_request and ('приветств' in edits.lower() or 'привет' in edits.lower() or 'блок приветствия' in edits.lower()):
+                    # Добавление блока приветствия - генерируем только новый абзац, вставляем программно в начало
+                    insert_position = 1  # Первый абзац (в начало)
+                    
+                    simple_system_prompt = self._get_post_now_system_prompt()
+                    simple_system_prompt += "\n\nТвоя задача - написать ТОЛЬКО короткий абзац-приветствие для начала поста."
+                    
+                    prompt = f"""Вот контекст поста:
+{original_post}
+
+Руководитель просит добавить блок приветствия:
+{edits}
+
+Напиши ТОЛЬКО один короткий абзац-приветствие для начала поста. Абзац должен быть дружелюбным и приветствовать читателей. Верни ТОЛЬКО текст абзаца, без дополнительных комментариев и заголовков."""
+                    
+                    logger.info(f"Генерация нового абзаца-приветствия для вставки на позицию {insert_position}")
+                    
+                    response = await asyncio.wait_for(
+                        self.client.chat.completions.create(
+                            model=self.model,
+                            messages=[
+                                {"role": "system", "content": simple_system_prompt},
+                                {"role": "user", "content": prompt}
+                            ],
+                            temperature=0.0,
+                            max_tokens=500,  # Приветствие должно быть коротким
+                            top_p=0.1
+                        ),
+                        timeout=180.0 if self.proxy_enabled else 60.0
+                    )
+                    
+                    new_paragraph = response.choices[0].message.content.strip()
+                    new_paragraph = clean_ai_response(new_paragraph)
+                    
+                    # Убираем заголовки из нового абзаца, если они там есть
+                    for pattern in header_patterns:
+                        new_paragraph = re.sub(pattern, '', new_paragraph, flags=re.IGNORECASE)
+                    new_paragraph = new_paragraph.strip()
+                    
+                    # Программно вставляем новый абзац в начало, остальные оставляем как есть
+                    result = insert_paragraph_programmatically(original_post, insert_position, new_paragraph)
+                    
+                    # Конвертируем markdown в HTML
+                    result = markdown_to_html(result)
+                    
+                    logger.info(f"Новый абзац-приветствие вставлен программно на позицию {insert_position}. Исходная длина: {len(original_post)}, новая длина: {len(result)} символов")
+                    
+                    return result
+                
                 # Для общих правок показываем каждый абзац отдельно с четким указанием что НЕ менять
                 paragraphs_list = []
                 for i, para in enumerate(paragraphs, 1):
