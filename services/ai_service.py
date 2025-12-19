@@ -1146,23 +1146,52 @@ class AIService:
                 is_multiple_delete = len(paragraph_nums_to_delete) > 1
             else:
                 # Пытаемся разбить по запятым или другим разделителям
-                parts = [p.strip() for p in re.split(r'[,\n]', keywords_text) if p.strip()]
+                # Улучшенный парсинг: ищем фразы в кавычках (одинарных или двойных) или разделенные запятыми
+                parts = []
+                
+                # Сначала пытаемся найти фразы в кавычках (одинарных или двойных)
+                quoted_matches = re.findall(r'["""]([^"""]+)["""]', edits)
+                if quoted_matches:
+                    parts = quoted_matches
+                    logger.info(f"Найдены фразы в кавычках: {parts}")
+                else:
+                    # Разбиваем по запятым, но учитываем что могут быть кавычки
+                    # Убираем слова удаления и разбиваем
+                    temp_text = keywords_text
+                    # Простое разбиение по запятым
+                    parts = [p.strip() for p in re.split(r'[,]', temp_text) if p.strip() and len(p.strip()) > 3]
+                
                 if len(parts) > 1:
                     paragraph_nums_to_delete = find_paragraphs_by_keywords(original_post, parts)
                     is_multiple_delete = len(paragraph_nums_to_delete) > 1
-                else:
+                    logger.info(f"Найдены абзацы для удаления по частям ({len(parts)} частей): {paragraph_nums_to_delete}")
+                elif len(parts) == 1:
                     # Один блок
+                    found_num = find_paragraph_by_keywords(original_post, parts[0])
+                    if found_num:
+                        paragraph_nums_to_delete = [found_num]
+                        paragraph_num = found_num
+                        logger.info(f"Найден абзац для удаления: {found_num}")
+                else:
+                    # Пытаемся найти по всему тексту
                     if keywords_text:
                         found_num = find_paragraph_by_keywords(original_post, keywords_text)
                         if found_num:
                             paragraph_nums_to_delete = [found_num]
                             paragraph_num = found_num
+                            logger.info(f"Найден абзац для удаления по ключевым словам: {found_num}")
         
         # Если это запрос на удаление и мы нашли абзац(ы) - удаляем программно без AI
         if is_delete_request and paragraph_nums_to_delete:
-            logger.info(f"Удаление абзацев {paragraph_nums_to_delete} программно (без AI)")
+            logger.info(f"Удаление абзацев {paragraph_nums_to_delete} программно (без AI). Исходный текст (первые 300 символов): {original_post[:300]}...")
             result = remove_paragraphs_programmatically(original_post, paragraph_nums_to_delete)
-            logger.info(f"Абзацы удалены программно. Исходная длина: {len(original_post)}, новая длина: {len(result)}")
+            logger.info(f"Абзацы удалены программно. Исходная длина: {len(original_post)}, новая длина: {len(result)}. Результат (первые 300 символов): {result[:300]}...")
+            
+            # Проверяем, что результат не пустой
+            if not result.strip():
+                logger.warning("Результат удаления пустой, возвращаем оригинал")
+                result = original_post
+            
             # Конвертируем markdown в HTML на всякий случай
             result = markdown_to_html(result)
             return result
