@@ -3274,11 +3274,17 @@ async def post_now_edit(callback: CallbackQuery, state: FSMContext):
         if "Черновик поста для согласования:" in post_text:
             post_text = post_text.split("\n\n", 1)[1] if "\n\n" in post_text else post_text.replace("Черновик поста для согласования:", "").strip()
         post_text = post_text.replace("<b>Черновик поста для согласования:</b>", "").strip()
+        # Убираем также заголовок "(после правок)"
+        post_text = post_text.replace("<b>Черновик поста для согласования (после правок):</b>", "").strip()
     
     # Сохраняем исходный текст и фото в состоянии
     data = await state.get_data()
     photo_path = data.get('generated_photo_path')
     photo_paths = data.get('generated_photo_paths', [])
+    
+    # ВАЖНО: Также проверяем, есть ли уже сохраненные original_photo_paths (для повторных редактирований)
+    if not photo_paths:
+        photo_paths = data.get('original_photo_paths', [])
     
     # Если нет списка фото, используем одно фото
     if not photo_paths and photo_path:
@@ -3827,7 +3833,10 @@ async def process_edits(message: Message, state: FSMContext):
             await state.update_data(
                 generated_post_text=refined_post,
                 generated_photo_paths=original_photo_paths,
-                generated_photo_path=original_photo_paths[0] if original_photo_paths else None
+                generated_photo_path=original_photo_paths[0] if original_photo_paths else None,
+                # ВАЖНО: Сохраняем original_photo_paths для будущих редактирований
+                original_photo_paths=original_photo_paths,
+                original_photo_path=original_photo_paths[0] if original_photo_paths else None
             )
             await state.set_state(PostNowStates.waiting_for_approval)
             
