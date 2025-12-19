@@ -3285,22 +3285,35 @@ async def post_now_edit(callback: CallbackQuery, state: FSMContext):
     # ВАЖНО: Также проверяем, есть ли уже сохраненные original_photo_paths (для повторных редактирований)
     if not photo_paths:
         photo_paths = data.get('original_photo_paths', [])
+        if photo_paths:
+            logger.info(f"🔵 post_now_edit: Использованы original_photo_paths из состояния: {photo_paths}")
     
     # Если нет списка фото, используем одно фото
     if not photo_paths and photo_path:
         photo_paths = [photo_path]
     
+    # КРИТИЧНО: Если все еще нет фото, проверяем, есть ли они в сообщении (для повторных редактирований)
+    if not photo_paths:
+        # Пытаемся получить фото из сообщения с черновиком
+        message_id = callback.message.message_id
+        if message_id in dependencies.telegram_service._draft_photos:
+            photo_paths = dependencies.telegram_service._draft_photos[message_id]
+            logger.info(f"🔵 post_now_edit: Найдены фото в _draft_photos для message_id={message_id}: {photo_paths}")
+    
     logger.info(f"🔵 post_now_edit: Сохранение данных для редактирования 'Опубликовать сейчас': photo_paths={photo_paths}, photo_path={photo_path}, post_text_len={len(post_text)}")
     
     await state.update_data(
         original_post_text=post_text,
-        original_photo_path=photo_path,
-        original_photo_paths=photo_paths  # Сохраняем список фото для функции "Опубликовать сейчас"
+        original_photo_path=photo_paths[0] if photo_paths else None,
+        original_photo_paths=photo_paths,  # Сохраняем список фото для функции "Опубликовать сейчас"
+        # ВАЖНО: Также сохраняем как generated_photo_paths для будущих редактирований
+        generated_photo_paths=photo_paths,
+        generated_photo_path=photo_paths[0] if photo_paths else None
     )
     
     # Проверяем, что данные сохранились
     check_data = await state.get_data()
-    logger.info(f"🔵 post_now_edit: Проверка сохраненных данных: original_photo_paths={check_data.get('original_photo_paths')}, len={len(check_data.get('original_photo_paths', []))}")
+    logger.info(f"🔵 post_now_edit: Проверка сохраненных данных: original_photo_paths={check_data.get('original_photo_paths')}, len={len(check_data.get('original_photo_paths', []))}, generated_photo_paths={check_data.get('generated_photo_paths', [])}")
     
     # Переходим в состояние ожидания правок (используем существующее состояние)
     await state.set_state(PostApprovalStates.waiting_for_edits)
