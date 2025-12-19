@@ -1111,7 +1111,8 @@ class AIService:
         from services.text_utils import (
             extract_paragraph_number, find_paragraph_by_keywords, 
             find_paragraphs_by_keywords, remove_paragraph_programmatically,
-            remove_paragraphs_programmatically
+            remove_paragraphs_programmatically, replace_paragraph_programmatically,
+            insert_paragraph_programmatically
         )
         
         # Разбиваем исходный пост на абзацы
@@ -1248,35 +1249,58 @@ class AIService:
 - НЕ меняй стиль
 - Верни пост БЕЗ удаленного абзаца, остальное оставь как есть"""
             elif paragraph_num:
-                # Показываем каждый абзац отдельно с четким указанием что менять
-                other_paragraphs = []
-                target_paragraph = ""
-                for i, para in enumerate(paragraphs, 1):
-                    if i == paragraph_num:
-                        target_paragraph = para
-                    else:
-                        other_paragraphs.append(f"АБЗАЦ {i}: {para}")
+                # Для редактирования конкретного абзаца - генерируем только этот абзац, остальные заменяем программно
+                target_paragraph = paragraphs[paragraph_num - 1]
                 
-                prompt = f"""Вот исходный пост (структура из {len(paragraphs)} абзацев):
+                # Используем упрощенный системный промпт только для генерации одного абзаца
+                simple_system_prompt = """Ты профессиональный редактор текстов для строительной компании "Археон".
+Твоя задача - отредактировать ОДИН абзац согласно правкам руководителя.
 
-{chr(10).join(other_paragraphs)}
-
-АБЗАЦ {paragraph_num} (ЭТОТ НУЖНО ИЗМЕНИТЬ):
+КРИТИЧЕСКИ ВАЖНО:
+- Сохрани стиль и содержание исходного абзаца
+- Внеси ТОЛЬКО те изменения, которые указаны в правках
+- НЕ добавляй эмодзи если их не было в оригинале
+- НЕ меняй стиль текста радикально
+- НЕ переписывай абзац полностью, только внеси необходимые изменения
+- Верни ТОЛЬКО отредактированный абзац, без дополнительных комментариев"""
+                
+                prompt = f"""Вот исходный абзац (АБЗАЦ {paragraph_num}):
 {target_paragraph}
 
-Руководитель просит изменить ТОЛЬКО АБЗАЦ {paragraph_num}:
+Руководитель просит изменить этот абзац:
 {edits}
 
-КРИТИЧЕСКИ ВАЖНО - ТЫ ДОЛЖЕН:
-1. АБЗАЦЫ {', '.join(str(i) for i in range(1, len(paragraphs)+1) if i != paragraph_num)} скопировать ТОЧНО как выше - БЕЗ ИЗМЕНЕНИЙ, БЕЗ ПЕРЕФРАЗИРОВАНИЯ
-2. Изменить ТОЛЬКО АБЗАЦ {paragraph_num} согласно правкам выше
-3. НЕ переписывать другие абзацы
-4. НЕ добавлять эмодзи если их не было
-5. НЕ менять стиль других абзацев
-6. НЕ менять формулировки других абзацев
-7. Сохранить структуру из {len(paragraphs)} абзацев
-
-Верни весь пост целиком: все {len(paragraphs)} абзацев в том же порядке, где изменен только АБЗАЦ {paragraph_num}."""
+Отредактируй ТОЛЬКО этот абзац согласно правкам. Сохрани стиль и содержание, внеси только необходимые изменения. Верни ТОЛЬКО отредактированный абзац."""
+                
+                # Генерируем только измененный абзац
+                logger.info(f"Генерация только {paragraph_num}-го абзаца для редактирования")
+                
+                response = await asyncio.wait_for(
+                    self.client.chat.completions.create(
+                        model=self.model,
+                        messages=[
+                            {"role": "system", "content": simple_system_prompt},
+                            {"role": "user", "content": prompt}
+                        ],
+                        temperature=0.0,
+                        max_tokens=2000,
+                        top_p=0.1
+                    ),
+                    timeout=180.0 if self.proxy_enabled else 60.0
+                )
+                
+                new_paragraph = response.choices[0].message.content.strip()
+                new_paragraph = clean_ai_response(new_paragraph)
+                
+                # Программно заменяем только этот абзац, остальные оставляем как есть
+                result = replace_paragraph_programmatically(original_post, paragraph_num, new_paragraph)
+                
+                # Конвертируем markdown в HTML
+                result = markdown_to_html(result)
+                
+                logger.info(f"Абзац {paragraph_num} заменен программно. Исходная длина: {len(original_post)}, новая длина: {len(result)} символов")
+                
+                return result
             else:
                 # Для общих правок показываем каждый абзац отдельно с четким указанием что НЕ менять
                 paragraphs_list = []

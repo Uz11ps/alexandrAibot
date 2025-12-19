@@ -248,3 +248,48 @@ def remove_paragraph_programmatically(text: str, paragraph_num: int) -> str:
     """
     return remove_paragraphs_programmatically(text, [paragraph_num])
 
+
+def replace_paragraph_programmatically(text: str, paragraph_num: int, new_paragraph: str) -> str:
+    """
+    Программно заменяет указанный абзац новым текстом
+    
+    Args:
+        text: Исходный текст
+        paragraph_num: Номер абзаца для замены (1-based)
+        new_paragraph: Новый текст абзаца
+        
+    Returns:
+        Текст с замененным абзацем
+    """
+    paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
+    
+    if paragraph_num < 1 or paragraph_num > len(paragraphs):
+        return text  # Возвращаем оригинал если номер некорректный
+    
+    # Заменяем указанный абзац
+    paragraphs[paragraph_num - 1] = new_paragraph.strip()
+    
+    # Собираем обратно
+    return '\n\n'.join(paragraphs)
+
+
+def insert_paragraph_programmatically(text: str, paragraph_num: int, new_paragraph: str) -> str:
+    """
+    Программно вставляет новый абзац в указанную позицию
+    
+    Args:
+        text: Исходный текст
+        paragraph_num: Позиция для вставки (1-based)
+        new_paragraph: Новый текст абзаца
+        
+    Returns:
+        Текст с вставленным абзацем
+    """
+    paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
+    
+    # Вставляем новый абзац
+    paragraphs.insert(paragraph_num - 1, new_paragraph.strip())
+    
+    # Собираем обратно
+    return '\n\n'.join(paragraphs)
+
