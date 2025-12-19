@@ -1302,6 +1302,54 @@ class AIService:
                 
                 return result
             else:
+                # Проверяем, просят ли добавить абзац
+                add_keywords = ['добавь', 'добавить', 'вставь', 'вставить']
+                is_add_request = any(keyword in edits.lower() for keyword in add_keywords)
+                
+                if is_add_request and 'ошибк' in edits.lower():
+                    # Добавление абзаца о частых ошибках - генерируем только новый абзац, вставляем программно
+                    insert_position = 3  # Третий абзац
+                    
+                    simple_system_prompt = self._get_post_now_system_prompt()
+                    simple_system_prompt += "\n\nТвоя задача - написать ТОЛЬКО абзац о частых ошибках на этапе строительства."
+                    
+                    prompt = f"""Вот контекст поста:
+{original_post}
+
+Руководитель просит добавить абзац о частых ошибках:
+{edits}
+
+Напиши ТОЛЬКО один абзац о частых ошибках на данном этапе строительства. Абзац должен описывать типичные ошибки и их последствия. Верни ТОЛЬКО текст абзаца, без дополнительных комментариев."""
+                    
+                    logger.info(f"Генерация нового абзаца о частых ошибках для вставки на позицию {insert_position}")
+                    
+                    response = await asyncio.wait_for(
+                        self.client.chat.completions.create(
+                            model=self.model,
+                            messages=[
+                                {"role": "system", "content": simple_system_prompt},
+                                {"role": "user", "content": prompt}
+                            ],
+                            temperature=0.0,
+                            max_tokens=2000,
+                            top_p=0.1
+                        ),
+                        timeout=180.0 if self.proxy_enabled else 60.0
+                    )
+                    
+                    new_paragraph = response.choices[0].message.content.strip()
+                    new_paragraph = clean_ai_response(new_paragraph)
+                    
+                    # Программно вставляем новый абзац, остальные оставляем как есть
+                    result = insert_paragraph_programmatically(original_post, insert_position, new_paragraph)
+                    
+                    # Конвертируем markdown в HTML
+                    result = markdown_to_html(result)
+                    
+                    logger.info(f"Новый абзац вставлен программно на позицию {insert_position}. Исходная длина: {len(original_post)}, новая длина: {len(result)} символов")
+                    
+                    return result
+                
                 # Для общих правок показываем каждый абзац отдельно с четким указанием что НЕ менять
                 paragraphs_list = []
                 for i, para in enumerate(paragraphs, 1):
@@ -1323,8 +1371,7 @@ class AIService:
 6. НЕ менять стиль текста
 7. НЕ менять формулировки если это не требуется в правках
 8. Сохранить стиль и содержание исходного текста
-9. Если просят добавить абзац о частых ошибках, добавить его как третий абзац (АБЗАЦ 3)
-10. Если правки не касаются какого-то абзаца, оставить его ТОЧНО как в оригинале - слово в слово
+9. Если правки не касаются какого-то абзаца, оставить его ТОЧНО как в оригинале - слово в слово
 
 Верни весь пост целиком, где изменены ТОЛЬКО те части, которые указаны в правках."""
             
