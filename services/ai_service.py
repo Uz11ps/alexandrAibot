@@ -1183,9 +1183,23 @@ class AIService:
         
         # Если это запрос на удаление и мы нашли абзац(ы) - удаляем программно без AI
         if is_delete_request and paragraph_nums_to_delete:
-            logger.info(f"Удаление абзацев {paragraph_nums_to_delete} программно (без AI). Исходный текст (первые 300 символов): {original_post[:300]}...")
+            logger.info(f"Удаление абзацев {paragraph_nums_to_delete} программно (без AI). Запрос: {edits}")
+            logger.info(f"Исходный текст (первые 500 символов): {original_post[:500]}...")
+            
+            # Разбиваем на абзацы для отладки
+            original_paragraphs = [p.strip() for p in original_post.split('\n\n') if p.strip()]
+            logger.info(f"Исходное количество абзацев: {len(original_paragraphs)}")
+            for i, para in enumerate(original_paragraphs, 1):
+                logger.info(f"Абзац {i} (первые 100 символов): {para[:100]}...")
+            
             result = remove_paragraphs_programmatically(original_post, paragraph_nums_to_delete)
-            logger.info(f"Абзацы удалены программно. Исходная длина: {len(original_post)}, новая длина: {len(result)}. Результат (первые 300 символов): {result[:300]}...")
+            
+            # Разбиваем результат на абзацы для отладки
+            result_paragraphs = [p.strip() for p in result.split('\n\n') if p.strip()]
+            logger.info(f"Абзацы удалены программно. Исходная длина: {len(original_post)}, новая длина: {len(result)}")
+            logger.info(f"Результат: количество абзацев {len(result_paragraphs)}")
+            for i, para in enumerate(result_paragraphs, 1):
+                logger.info(f"Абзац {i} (первые 100 символов): {para[:100]}...")
             
             # Проверяем, что результат не пустой
             if not result.strip():
@@ -1194,6 +1208,7 @@ class AIService:
             
             # Конвертируем markdown в HTML на всякий случай
             result = markdown_to_html(result)
+            logger.info(f"Возвращаем результат программного удаления (длина: {len(result)})")
             return result
         
         # Используем промпт "Опубликовать сейчас" для редактирования

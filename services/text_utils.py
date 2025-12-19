@@ -145,10 +145,17 @@ def find_paragraphs_by_keywords(text: str, keywords_list: list[str]) -> list[int
                     found_indices.append(i)
                     break
         
-        elif 'однако' in keywords_lower or 'сталкиваемся' in keywords_lower:
+        elif 'однако' in keywords_lower or 'сталкиваемся' in keywords_lower or 'есть некоторые моменты' in keywords_lower:
             for i, para in enumerate(paragraphs, 1):
                 para_lower = para.lower()
-                if ('однако' in para_lower or 'сталкиваемся' in para_lower) and (i) not in found_indices:
+                if ('однако' in para_lower or 'сталкиваемся' in para_lower or 'есть некоторые моменты' in para_lower) and (i) not in found_indices:
+                    found_indices.append(i)
+                    break
+        
+        elif 'применение газобетона' in keywords_lower or ('применение' in keywords_lower and 'газобетон' in keywords_lower):
+            for i, para in enumerate(paragraphs, 1):
+                para_lower = para.lower()
+                if ('применение газобетона' in para_lower or ('применение' in para_lower and 'газобетон' in para_lower)) and (i) not in found_indices:
                     found_indices.append(i)
                     break
         
@@ -219,6 +226,18 @@ def find_paragraph_by_keywords(text: str, keywords: str) -> Optional[int]:
         for i, para in enumerate(paragraphs, 1):
             para_lower = para.lower()
             if 'работаем строго' in para_lower or ('работаем' in para_lower and 'снип' in para_lower):
+                return i
+    
+    if 'однако' in keywords_lower or 'сталкиваемся' in keywords_lower or 'есть некоторые моменты' in keywords_lower:
+        for i, para in enumerate(paragraphs, 1):
+            para_lower = para.lower()
+            if 'однако' in para_lower or 'сталкиваемся' in para_lower or 'есть некоторые моменты' in para_lower:
+                return i
+    
+    if 'применение газобетона' in keywords_lower or ('применение' in keywords_lower and 'газобетон' in keywords_lower):
+        for i, para in enumerate(paragraphs, 1):
+            para_lower = para.lower()
+            if 'применение газобетона' in para_lower or ('применение' in para_lower and 'газобетон' in para_lower):
                 return i
     
     # Общий поиск по ключевым словам
