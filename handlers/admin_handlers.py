@@ -3849,18 +3849,18 @@ async def process_edits(message: Message, state: FSMContext):
                                 reply_markup=keyboard,
                                 parse_mode="HTML"
                             )
+                            dependencies.telegram_service._draft_photos[sent_message.message_id] = original_photo_paths.copy()
                         else:
                             photo_message = await message.answer_photo(
                                 photo=photo_input,
                                 caption=f"{header}📝 Полный текст ниже ⬇️",
                                 parse_mode="HTML"
                             )
-                                sent_message = await message.answer(
-                                    text=full_text,
-                                    reply_markup=keyboard,
-                                    parse_mode="HTML"
-                                )
-                                dependencies.telegram_service._draft_photos[sent_message.message_id] = original_photo_paths.copy()
+                            sent_message = await message.answer(
+                                text=full_text,
+                                reply_markup=keyboard,
+                                parse_mode="HTML"
+                            )
                             dependencies.telegram_service._draft_photos[sent_message.message_id] = original_photo_paths.copy()
                     else:
                         await message.answer(
