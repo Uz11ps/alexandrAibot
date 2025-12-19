@@ -3135,18 +3135,18 @@ async def post_now_process_prompt(message: Message, state: FSMContext):
                 for i, photo_path in enumerate(photos):
                     photo_file = Path(photo_path)
                     if photo_file.exists():
-                        with open(photo_path, 'rb') as photo_data:
-                            if i == 0 and len(full_text) <= MAX_CAPTION_LENGTH:
-                                # Первое фото с полным текстом в caption
-                                media.append(InputMediaPhoto(
-                                    media=photo_data,
-                                    caption=full_text,
-                                    parse_mode="HTML"
-                                ))
-                            else:
-                                # Остальные фото без caption или с коротким
-                                photo_data.seek(0)
-                                media.append(InputMediaPhoto(media=photo_data))
+                        from aiogram.types import FSInputFile
+                        photo_input = FSInputFile(photo_path)
+                        if i == 0 and len(full_text) <= MAX_CAPTION_LENGTH:
+                            # Первое фото с полным текстом в caption
+                            media.append(InputMediaPhoto(
+                                media=photo_input,
+                                caption=full_text,
+                                parse_mode="HTML"
+                            ))
+                        else:
+                            # Остальные фото без caption или с коротким
+                            media.append(InputMediaPhoto(media=photo_input))
                 
                 if media:
                     sent_messages = await message.answer_media_group(media=media)
@@ -3627,16 +3627,16 @@ async def _generate_post_from_state(message: Message, state: FSMContext):
                 for i, photo_path in enumerate(photos):
                     photo_file = Path(photo_path)
                     if photo_file.exists():
-                        with open(photo_path, 'rb') as photo_data:
-                            if i == 0 and len(full_text) <= MAX_CAPTION_LENGTH:
-                                media.append(InputMediaPhoto(
-                                    media=photo_data,
-                                    caption=full_text,
-                                    parse_mode="HTML"
-                                ))
-                            else:
-                                photo_data.seek(0)
-                                media.append(InputMediaPhoto(media=photo_data))
+                        from aiogram.types import FSInputFile
+                        photo_input = FSInputFile(photo_path)
+                        if i == 0 and len(full_text) <= MAX_CAPTION_LENGTH:
+                            media.append(InputMediaPhoto(
+                                media=photo_input,
+                                caption=full_text,
+                                parse_mode="HTML"
+                            ))
+                        else:
+                            media.append(InputMediaPhoto(media=photo_input))
                 
                 if media:
                     sent_messages = await message.answer_media_group(media=media)
