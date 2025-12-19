@@ -3284,11 +3284,17 @@ async def post_now_edit(callback: CallbackQuery, state: FSMContext):
     if not photo_paths and photo_path:
         photo_paths = [photo_path]
     
+    logger.info(f"🔵 post_now_edit: Сохранение данных для редактирования 'Опубликовать сейчас': photo_paths={photo_paths}, photo_path={photo_path}, post_text_len={len(post_text)}")
+    
     await state.update_data(
         original_post_text=post_text,
         original_photo_path=photo_path,
         original_photo_paths=photo_paths  # Сохраняем список фото для функции "Опубликовать сейчас"
     )
+    
+    # Проверяем, что данные сохранились
+    check_data = await state.get_data()
+    logger.info(f"🔵 post_now_edit: Проверка сохраненных данных: original_photo_paths={check_data.get('original_photo_paths')}, len={len(check_data.get('original_photo_paths', []))}")
     
     # Переходим в состояние ожидания правок (используем существующее состояние)
     await state.set_state(PostApprovalStates.waiting_for_edits)
