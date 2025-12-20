@@ -1170,21 +1170,36 @@ class AIService:
             p = p.strip()
             if not p:
                 continue
+            
             # Проверяем, не является ли абзац заголовком
             is_header = False
+            
+            # Удаляем HTML-теги для проверки
+            p_clean = re.sub(r'<[^>]+>', '', p)
+            
+            # Проверяем на заголовки с эмодзи
+            if p_clean.startswith('📝') and 'Черновик поста для согласования' in p_clean:
+                is_header = True
+            
+            # Проверяем на заголовки без эмодзи
+            if 'Черновик поста для согласования' in p_clean and len(p_clean) < 100:
+                # Если абзац содержит только заголовок (короткий и содержит ключевые слова)
+                if 'после правок' in p_clean.lower() or 'полный текст ниже' in p_clean.lower():
+                    is_header = True
+            
+            # Проверяем паттернами
             for pattern in header_patterns:
-                if re.match(pattern, p, flags=re.IGNORECASE):
+                if re.search(pattern, p_clean, flags=re.IGNORECASE):
                     is_header = True
                     break
-            # Также проверяем на заголовки без эмодзи в начале строки
-            if p.startswith('📝') and 'Черновик поста для согласования' in p:
-                is_header = True
+            
             if not is_header:
                 paragraphs.append(p)
         
         # Логируем результат очистки
-        if len(paragraphs) != len([p.strip() for p in original_post.split('\n\n') if p.strip()]):
-            logger.info(f"Удалены абзацы-заголовки. Осталось абзацев: {len(paragraphs)}")
+        original_para_count = len([p.strip() for p in original_post.split('\n\n') if p.strip()])
+        if len(paragraphs) != original_para_count:
+            logger.info(f"Удалены абзацы-заголовки. Было абзацев: {original_para_count}, осталось: {len(paragraphs)}")
         
         # Проверяем, указан ли конкретный абзац для редактирования
         paragraph_num = extract_paragraph_number(edits)
@@ -1341,19 +1356,37 @@ class AIService:
                 p = p.strip()
                 if not p:
                     continue
+                
                 # Проверяем, не является ли абзац заголовком
                 is_header = False
+                
+                # Удаляем HTML-теги для проверки
+                p_clean = re.sub(r'<[^>]+>', '', p)
+                
+                # Проверяем на заголовки с эмодзи
+                if p_clean.startswith('📝') and 'Черновик поста для согласования' in p_clean:
+                    is_header = True
+                
+                # Проверяем на заголовки без эмодзи
+                if 'Черновик поста для согласования' in p_clean and len(p_clean) < 100:
+                    # Если абзац содержит только заголовок (короткий и содержит ключевые слова)
+                    if 'после правок' in p_clean.lower() or 'полный текст ниже' in p_clean.lower():
+                        is_header = True
+                
+                # Проверяем паттернами
                 for pattern in header_patterns:
-                    if re.match(pattern, p, flags=re.IGNORECASE):
+                    if re.search(pattern, p_clean, flags=re.IGNORECASE):
                         is_header = True
                         break
-                # Также проверяем на заголовки без эмодзи в начале строки
-                if p.startswith('📝') and 'Черновик поста для согласования' in p:
-                    is_header = True
+                
                 if not is_header:
                     cleaned_paragraphs.append(p)
             
             result = '\n\n'.join(cleaned_paragraphs)
+            
+            # Логируем результат очистки
+            if len(cleaned_paragraphs) != len(result_paragraphs):
+                logger.info(f"Удалены абзацы-заголовки после программного удаления. Было: {len(result_paragraphs)}, осталось: {len(cleaned_paragraphs)}")
             
             # Конвертируем markdown в HTML на всякий случай
             result = markdown_to_html(result)

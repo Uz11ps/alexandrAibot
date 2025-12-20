@@ -3296,9 +3296,43 @@ async def post_now_edit(callback: CallbackQuery, state: FSMContext):
         post_text = re.sub(r'\n{3,}', '\n\n', post_text)
         post_text = post_text.strip()
         
+        # Удаляем абзацы, которые являются только заголовками
+        cleaned_paragraphs = []
+        for p in post_text.split('\n\n'):
+            p = p.strip()
+            if not p:
+                continue
+            
+            # Проверяем, не является ли абзац заголовком
+            is_header = False
+            
+            # Удаляем HTML-теги для проверки
+            p_clean = re.sub(r'<[^>]+>', '', p)
+            
+            # Проверяем на заголовки с эмодзи
+            if p_clean.startswith('📝') and 'Черновик поста для согласования' in p_clean:
+                is_header = True
+            
+            # Проверяем на заголовки без эмодзи
+            if 'Черновик поста для согласования' in p_clean and len(p_clean) < 100:
+                # Если абзац содержит только заголовок (короткий и содержит ключевые слова)
+                if 'после правок' in p_clean.lower() or 'полный текст ниже' in p_clean.lower():
+                    is_header = True
+            
+            # Проверяем паттернами
+            for pattern in header_patterns:
+                if re.search(pattern, p_clean, flags=re.IGNORECASE):
+                    is_header = True
+                    break
+            
+            if not is_header:
+                cleaned_paragraphs.append(p)
+        
+        post_text = '\n\n'.join(cleaned_paragraphs)
+        
         # Логируем очистку
         if len(post_text) != original_post_text_length:
-            logger.info(f"🔵 post_now_edit: Заголовки удалены. Исходная длина: {original_post_text_length}, очищенная длина: {len(post_text)}")
+            logger.info(f"🔵 post_now_edit: Заголовки удалены. Исходная длина: {original_post_text_length}, очищенная длина: {len(post_text)}, удалено абзацев-заголовков: {len([p.strip() for p in (callback.message.text or callback.message.caption or '').split('\\n\\n') if p.strip()]) - len(cleaned_paragraphs)}")
     
     # Сохраняем исходный текст и фото в состоянии
     data = await state.get_data()
