@@ -3346,7 +3346,12 @@ async def post_now_edit(callback: CallbackQuery, state: FSMContext):
         
         # Логируем очистку
         if len(post_text) != original_post_text_length:
-            logger.info(f"🔵 post_now_edit: Заголовки удалены. Исходная длина: {original_post_text_length}, очищенная длина: {len(post_text)}, удалено абзацев-заголовков: {len([p.strip() for p in (callback.message.text or callback.message.caption or '').split('\\n\\n') if p.strip()]) - len(cleaned_paragraphs)}")
+            # Вычисляем количество исходных абзацев (выносим split с обратным слэшем из f-string)
+            original_text = callback.message.text or callback.message.caption or ''
+            newline = '\n\n'
+            original_paragraphs_count = len([p.strip() for p in original_text.split(newline) if p.strip()])
+            removed_headers_count = original_paragraphs_count - len(cleaned_paragraphs)
+            logger.info(f"🔵 post_now_edit: Заголовки удалены. Исходная длина: {original_post_text_length}, очищенная длина: {len(post_text)}, удалено абзацев-заголовков: {removed_headers_count}")
     
     # Сохраняем исходный текст и фото в состоянии
     data = await state.get_data()
