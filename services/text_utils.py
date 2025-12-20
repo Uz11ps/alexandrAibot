@@ -264,10 +264,19 @@ def remove_paragraphs_programmatically(text: str, paragraph_nums: list[int]) -> 
     """
     paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
     
+    # Проверяем, что не пытаемся удалить все абзацы
+    if len(paragraph_nums) >= len(paragraphs):
+        # Если пытаемся удалить все или больше абзацев, возвращаем оригинал
+        return text
+    
     # Удаляем абзацы в обратном порядке, чтобы индексы не сдвигались
     for para_num in sorted(paragraph_nums, reverse=True):
         if 1 <= para_num <= len(paragraphs):
             paragraphs.pop(para_num - 1)
+    
+    # Проверяем, что остался хотя бы один абзац
+    if not paragraphs:
+        return text  # Возвращаем оригинал, если все абзацы удалены
     
     # Собираем обратно
     return '\n\n'.join(paragraphs)

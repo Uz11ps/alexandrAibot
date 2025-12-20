@@ -1272,7 +1272,12 @@ class AIService:
             for i, para in enumerate(original_paragraphs, 1):
                 logger.info(f"Абзац {i} (первые 100 символов): {para[:100]}...")
             
-            result = remove_paragraphs_programmatically(original_post, paragraph_nums_to_delete)
+            # Проверяем, что не пытаемся удалить все абзацы
+            if len(paragraph_nums_to_delete) >= len(original_paragraphs):
+                logger.warning(f"Попытка удалить все абзацы ({len(paragraph_nums_to_delete)} из {len(original_paragraphs)}). Возвращаем оригинал.")
+                result = original_post
+            else:
+                result = remove_paragraphs_programmatically(original_post, paragraph_nums_to_delete)
             
             # Разбиваем результат на абзацы для отладки
             result_paragraphs = [p.strip() for p in result.split('\n\n') if p.strip()]
@@ -1282,8 +1287,8 @@ class AIService:
                 logger.info(f"Абзац {i} (первые 100 символов): {para[:100]}...")
             
             # Проверяем, что результат не пустой
-            if not result.strip():
-                logger.warning("Результат удаления пустой, возвращаем оригинал")
+            if not result.strip() or len(result_paragraphs) == 0:
+                logger.warning("Результат удаления пустой или все абзацы удалены, возвращаем оригинал")
                 result = original_post
             
             # Очищаем от заголовков после удаления абзацев
