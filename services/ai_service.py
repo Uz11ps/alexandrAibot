@@ -1315,7 +1315,6 @@ class AIService:
             keywords_text = keywords_text.replace('блок', '').replace('абзац', '').replace('пожалуйста', '').replace('блоки', '').strip()
             
             # Пытаемся найти несколько блоков (в кавычках или разделенных запятыми/переносами)
-            import re
             # Ищем текст в кавычках
             quoted_texts = re.findall(r'["""]([^"""]+)["""]', edits)
             if quoted_texts:
@@ -1895,7 +1894,6 @@ class AIService:
                     logger.warning(f"Изменено количество абзацев: было {original_para_count}, стало {new_para_count}")
                 
                 # Проверяем наличие эмодзи в оригинале и новом тексте
-                import re
                 emoji_pattern = re.compile("["
                     u"\U0001F600-\U0001F64F"  # emoticons
                     u"\U0001F300-\U0001F5FF"  # symbols & pictographs
