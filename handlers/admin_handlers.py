@@ -3943,8 +3943,34 @@ async def process_edits(message: Message, state: FSMContext):
                     status="completed"
                 )
             
+            # Очищаем refined_post от заголовков перед сохранением в состояние
+            import re
+            cleaned_for_state = refined_post
+            
+            # Удаляем HTML-теги из заголовков
+            cleaned_for_state = re.sub(r'<b>\s*📝\s*Черновик поста для согласования[^<]*</b>\s*\n*', '', cleaned_for_state, flags=re.IGNORECASE | re.MULTILINE)
+            cleaned_for_state = re.sub(r'<b>\s*Черновик поста для согласования[^<]*</b>\s*\n*', '', cleaned_for_state, flags=re.IGNORECASE | re.MULTILINE)
+            
+            # Удаляем обычные заголовки
+            header_patterns = [
+                r'📝\s*Черновик поста для согласования[^:]*:?\s*\n*',
+                r'📝\s*Полный текст ниже ⬇️\s*\n*',
+                r'Черновик поста для согласования[^:]*:?\s*\n*',
+                r'📝\s*Черновик поста для согласования\s*\(после правок\)\s*:?\s*\n*',
+                r'Черновик поста для согласования\s*\(после правок\)\s*:?\s*\n*',
+                r'📝\s*Черновик поста для согласования \(после правок\):?\s*\n*',
+                r'Черновик поста для согласования \(после правок\):?\s*\n*',
+            ]
+            for pattern in header_patterns:
+                while re.search(pattern, cleaned_for_state, flags=re.IGNORECASE | re.MULTILINE):
+                    cleaned_for_state = re.sub(pattern, '', cleaned_for_state, flags=re.IGNORECASE | re.MULTILINE)
+            
+            # Удаляем множественные переносы строк
+            cleaned_for_state = re.sub(r'\n{3,}', '\n\n', cleaned_for_state)
+            cleaned_for_state = cleaned_for_state.strip()
+            
             await state.update_data(
-                generated_post_text=refined_post,
+                generated_post_text=cleaned_for_state,
                 generated_photo_paths=original_photo_paths,
                 generated_photo_path=original_photo_paths[0] if original_photo_paths else None,
                 # ВАЖНО: Сохраняем original_photo_paths для будущих редактирований
@@ -3970,10 +3996,80 @@ async def process_edits(message: Message, state: FSMContext):
             try:
                 from pathlib import Path
                 from aiogram.types import InputMediaPhoto
+                import re
+                
+                # Очищаем refined_post от всех возможных заголовков перед добавлением нового
+                cleaned_refined_post = refined_post
+                
+                # Удаляем HTML-теги из заголовков
+                cleaned_refined_post = re.sub(r'<b>\s*📝\s*Черновик поста для согласования[^<]*</b>\s*\n*', '', cleaned_refined_post, flags=re.IGNORECASE | re.MULTILINE)
+                cleaned_refined_post = re.sub(r'<b>\s*Черновик поста для согласования[^<]*</b>\s*\n*', '', cleaned_refined_post, flags=re.IGNORECASE | re.MULTILINE)
+                
+                # Удаляем обычные заголовки (с эмодзи и без) - более агрессивные паттерны
+                header_patterns = [
+                    r'📝\s*Черновик поста для согласования[^:]*:?\s*\n*',
+                    r'📝\s*Полный текст ниже ⬇️\s*\n*',
+                    r'Черновик поста для согласования[^:]*:?\s*\n*',
+                    r'📝\s*Черновик поста для согласования\s*\(после правок\)\s*:?\s*\n*',
+                    r'Черновик поста для согласования\s*\(после правок\)\s*:?\s*\n*',
+                    r'📝\s*Черновик поста для согласования \(после правок\):?\s*\n*',
+                    r'Черновик поста для согласования \(после правок\):?\s*\n*',
+                ]
+                for pattern in header_patterns:
+                    # Используем цикл для удаления всех вхождений
+                    while re.search(pattern, cleaned_refined_post, flags=re.IGNORECASE | re.MULTILINE):
+                        cleaned_refined_post = re.sub(pattern, '', cleaned_refined_post, flags=re.IGNORECASE | re.MULTILINE)
+                
+                # Удаляем абзацы, которые являются только заголовками
+                cleaned_paragraphs = []
+                for p in cleaned_refined_post.split('\n\n'):
+                    p = p.strip()
+                    if not p:
+                        continue
+                    
+                    # Проверяем, не является ли абзац заголовком
+                    is_header = False
+                    
+                    # Удаляем HTML-теги для проверки
+                    p_clean = re.sub(r'<[^>]+>', '', p).strip()
+                    
+                    # Если абзац пустой после удаления HTML-тегов, пропускаем
+                    if not p_clean:
+                        is_header = True
+                    
+                    # Проверяем на заголовки с эмодзи в начале
+                    if p_clean.startswith('📝') and 'Черновик поста для согласования' in p_clean:
+                        is_header = True
+                    
+                    # Проверяем на заголовки без эмодзи
+                    if 'Черновик поста для согласования' in p_clean:
+                        if len(p_clean) < 150:
+                            header_keywords = ['после правок', 'полный текст ниже', 'черновик поста']
+                            if any(keyword in p_clean.lower() for keyword in header_keywords):
+                                if len(p_clean.split()) < 20:
+                                    is_header = True
+                    
+                    # Проверяем паттернами
+                    for pattern in header_patterns:
+                        if re.match(pattern, p_clean, flags=re.IGNORECASE):
+                            is_header = True
+                            break
+                        if re.search(pattern, p_clean, flags=re.IGNORECASE) and len(p_clean) < 150:
+                            is_header = True
+                            break
+                    
+                    if not is_header:
+                        cleaned_paragraphs.append(p)
+                
+                cleaned_refined_post = '\n\n'.join(cleaned_paragraphs)
+                
+                # Удаляем множественные переносы строк после удаления заголовков
+                cleaned_refined_post = re.sub(r'\n{3,}', '\n\n', cleaned_refined_post)
+                cleaned_refined_post = cleaned_refined_post.strip()
                 
                 MAX_CAPTION_LENGTH = 1024
                 header = "📝 <b>Черновик поста для согласования (после правок):</b>\n\n"
-                full_text = f"{header}{refined_post}"
+                full_text = f"{header}{cleaned_refined_post}"
                 
                 if len(original_photo_paths) == 1:
                     # Одно фото
@@ -4003,7 +4099,7 @@ async def process_edits(message: Message, state: FSMContext):
                             dependencies.telegram_service._draft_photos[sent_message.message_id] = original_photo_paths.copy()
                     else:
                         await message.answer(
-                            f"📝 <b>Черновик поста для согласования (после правок):</b>\n\n{refined_post}",
+                            f"📝 <b>Черновик поста для согласования (после правок):</b>\n\n{cleaned_refined_post}",
                             reply_markup=keyboard,
                             parse_mode="HTML"
                         )
@@ -4042,14 +4138,14 @@ async def process_edits(message: Message, state: FSMContext):
                             dependencies.telegram_service._draft_photos[sent_message.message_id] = original_photo_paths.copy()
                     else:
                         await message.answer(
-                            f"📝 <b>Черновик поста для согласования (после правок):</b>\n\n{refined_post}",
+                            f"📝 <b>Черновик поста для согласования (после правок):</b>\n\n{cleaned_refined_post}",
                             reply_markup=keyboard,
                             parse_mode="HTML"
                         )
             except Exception as e:
                 logger.error(f"Ошибка при отправке фото: {e}", exc_info=True)
                 await message.answer(
-                    f"📝 <b>Черновик поста для согласования (после правок):</b>\n\n{refined_post}",
+                    f"📝 <b>Черновик поста для согласования (после правок):</b>\n\n{cleaned_refined_post}",
                     reply_markup=keyboard,
                     parse_mode="HTML"
                 )

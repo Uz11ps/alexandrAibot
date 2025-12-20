@@ -1138,9 +1138,11 @@ class AIService:
         cleaned_post = original_post
         
         # Убираем заголовки типа "📝 Черновик поста для согласования (после правок):"
-        # Сначала удаляем HTML-теги из заголовков
-        cleaned_post = re.sub(r'<b>\s*📝\s*Черновик поста для согласования[^<]*</b>\s*\n*', '', cleaned_post, flags=re.IGNORECASE | re.MULTILINE)
-        cleaned_post = re.sub(r'<b>\s*Черновик поста для согласования[^<]*</b>\s*\n*', '', cleaned_post, flags=re.IGNORECASE | re.MULTILINE)
+        # Сначала удаляем HTML-теги из заголовков (удаляем все вхождения)
+        while re.search(r'<b>\s*📝\s*Черновик поста для согласования[^<]*</b>', cleaned_post, flags=re.IGNORECASE | re.MULTILINE):
+            cleaned_post = re.sub(r'<b>\s*📝\s*Черновик поста для согласования[^<]*</b>\s*\n*', '', cleaned_post, flags=re.IGNORECASE | re.MULTILINE)
+        while re.search(r'<b>\s*Черновик поста для согласования[^<]*</b>', cleaned_post, flags=re.IGNORECASE | re.MULTILINE):
+            cleaned_post = re.sub(r'<b>\s*Черновик поста для согласования[^<]*</b>\s*\n*', '', cleaned_post, flags=re.IGNORECASE | re.MULTILINE)
         
         # Затем удаляем обычные заголовки (с эмодзи и без) - более агрессивные паттерны
         header_patterns = [
@@ -1153,7 +1155,52 @@ class AIService:
             r'Черновик поста для согласования \(после правок\):?\s*\n*',
         ]
         for pattern in header_patterns:
-            cleaned_post = re.sub(pattern, '', cleaned_post, flags=re.IGNORECASE | re.MULTILINE)
+            # Используем цикл для удаления всех вхождений
+            while re.search(pattern, cleaned_post, flags=re.IGNORECASE | re.MULTILINE):
+                cleaned_post = re.sub(pattern, '', cleaned_post, flags=re.IGNORECASE | re.MULTILINE)
+        
+        # Удаляем абзацы, которые являются только заголовками
+        cleaned_paragraphs = []
+        for p in cleaned_post.split('\n\n'):
+            p = p.strip()
+            if not p:
+                continue
+            
+            # Проверяем, не является ли абзац заголовком
+            is_header = False
+            
+            # Удаляем HTML-теги для проверки
+            p_clean = re.sub(r'<[^>]+>', '', p).strip()
+            
+            # Если абзац пустой после удаления HTML-тегов, пропускаем
+            if not p_clean:
+                is_header = True
+            
+            # Проверяем на заголовки с эмодзи в начале
+            if p_clean.startswith('📝') and 'Черновик поста для согласования' in p_clean:
+                is_header = True
+            
+            # Проверяем на заголовки без эмодзи
+            if 'Черновик поста для согласования' in p_clean:
+                if len(p_clean) < 150:
+                    header_keywords = ['после правок', 'полный текст ниже', 'черновик поста']
+                    if any(keyword in p_clean.lower() for keyword in header_keywords):
+                        if len(p_clean.split()) < 20:
+                            is_header = True
+            
+            # Проверяем паттернами
+            for pattern in header_patterns:
+                if re.match(pattern, p_clean, flags=re.IGNORECASE):
+                    is_header = True
+                    break
+                if re.search(pattern, p_clean, flags=re.IGNORECASE) and len(p_clean) < 150:
+                    is_header = True
+                    break
+            
+            if not is_header:
+                cleaned_paragraphs.append(p)
+        
+        cleaned_post = '\n\n'.join(cleaned_paragraphs)
         
         # Удаляем множественные переносы строк после удаления заголовков
         cleaned_post = re.sub(r'\n{3,}', '\n\n', cleaned_post)
@@ -1762,20 +1809,69 @@ class AIService:
             refined_text = clean_ai_response(refined_text)
             
             # Дополнительная очистка заголовков после AI (на всякий случай)
-            # Удаляем HTML-теги из заголовков
-            refined_text = re.sub(r'<b>📝\s*Черновик поста для согласования[^<]*</b>', '', refined_text, flags=re.IGNORECASE)
-            refined_text = re.sub(r'<b>Черновик поста для согласования[^<]*</b>', '', refined_text, flags=re.IGNORECASE)
+            # Удаляем HTML-теги из заголовков (удаляем все вхождения)
+            while re.search(r'<b>\s*📝\s*Черновик поста для согласования[^<]*</b>', refined_text, flags=re.IGNORECASE | re.MULTILINE):
+                refined_text = re.sub(r'<b>\s*📝\s*Черновик поста для согласования[^<]*</b>\s*\n*', '', refined_text, flags=re.IGNORECASE | re.MULTILINE)
+            while re.search(r'<b>\s*Черновик поста для согласования[^<]*</b>', refined_text, flags=re.IGNORECASE | re.MULTILINE):
+                refined_text = re.sub(r'<b>\s*Черновик поста для согласования[^<]*</b>\s*\n*', '', refined_text, flags=re.IGNORECASE | re.MULTILINE)
             
-            # Удаляем обычные заголовки (с эмодзи и без)
+            # Удаляем обычные заголовки (с эмодзи и без) - удаляем все вхождения
             header_patterns = [
                 r'📝\s*Черновик поста для согласования[^:]*:?\s*\n*',
                 r'📝\s*Полный текст ниже ⬇️\s*\n*',
                 r'Черновик поста для согласования[^:]*:?\s*\n*',
+                r'📝\s*Черновик поста для согласования\s*\(после правок\)\s*:?\s*\n*',
+                r'Черновик поста для согласования\s*\(после правок\)\s*:?\s*\n*',
                 r'📝\s*Черновик поста для согласования \(после правок\):?\s*\n*',
                 r'Черновик поста для согласования \(после правок\):?\s*\n*',
             ]
             for pattern in header_patterns:
-                refined_text = re.sub(pattern, '', refined_text, flags=re.IGNORECASE | re.MULTILINE)
+                # Используем цикл для удаления всех вхождений
+                while re.search(pattern, refined_text, flags=re.IGNORECASE | re.MULTILINE):
+                    refined_text = re.sub(pattern, '', refined_text, flags=re.IGNORECASE | re.MULTILINE)
+            
+            # Удаляем абзацы, которые являются только заголовками
+            cleaned_paragraphs = []
+            for p in refined_text.split('\n\n'):
+                p = p.strip()
+                if not p:
+                    continue
+                
+                # Проверяем, не является ли абзац заголовком
+                is_header = False
+                
+                # Удаляем HTML-теги для проверки
+                p_clean = re.sub(r'<[^>]+>', '', p).strip()
+                
+                # Если абзац пустой после удаления HTML-тегов, пропускаем
+                if not p_clean:
+                    is_header = True
+                
+                # Проверяем на заголовки с эмодзи в начале
+                if p_clean.startswith('📝') and 'Черновик поста для согласования' in p_clean:
+                    is_header = True
+                
+                # Проверяем на заголовки без эмодзи
+                if 'Черновик поста для согласования' in p_clean:
+                    if len(p_clean) < 150:
+                        header_keywords = ['после правок', 'полный текст ниже', 'черновик поста']
+                        if any(keyword in p_clean.lower() for keyword in header_keywords):
+                            if len(p_clean.split()) < 20:
+                                is_header = True
+                
+                # Проверяем паттернами
+                for pattern in header_patterns:
+                    if re.match(pattern, p_clean, flags=re.IGNORECASE):
+                        is_header = True
+                        break
+                    if re.search(pattern, p_clean, flags=re.IGNORECASE) and len(p_clean) < 150:
+                        is_header = True
+                        break
+                
+                if not is_header:
+                    cleaned_paragraphs.append(p)
+            
+            refined_text = '\n\n'.join(cleaned_paragraphs)
             
             # Удаляем множественные переносы строк после удаления заголовков
             refined_text = re.sub(r'\n{3,}', '\n\n', refined_text)
