@@ -60,12 +60,41 @@ class PostService:
         prompt = f"Создай отчетный пост о работах на объекте для {day_name_ru}"
         
         # Генерируем пост
+        request_id = None
         if photo_paths:
-            post_text, _ = await self._generate_post_from_photo_and_prompt(photo_paths, prompt)
+            post_text, photo_paths, request_id = await self._generate_post_from_photo_and_prompt(
+                photo_paths, prompt, admin_id=0, request_type=f"scheduled_{day}", day_of_week=day
+            )
         else:
-            post_text = await self.ai_service.generate_post_text(prompt=prompt)
+            # Получаем контекст из истории
+            context_from_history = ""
+            if self.post_history_service:
+                context_from_history = self.post_history_service.get_context_for_generation(prompt)
+            
+            post_text = await self.ai_service.generate_post_text(
+                prompt=prompt,
+                context=context_from_history if context_from_history else None
+            )
             from services.ai_service import markdown_to_html
             post_text = markdown_to_html(post_text)
+            
+            # Сохраняем в историю
+            request_id = None
+            if self.post_history_service:
+                request_id = f"scheduled_{day}_{time.time()}"
+                self.post_history_service.add_request(
+                    request_id=request_id,
+                    admin_id=0,  # Системный запрос
+                    request_type=f"scheduled_{day}",
+                    prompt=prompt,
+                    photos_count=len(photo_paths),
+                    day_of_week=day
+                )
+                self.post_history_service.update_request(
+                    request_id=request_id,
+                    generated_post=post_text,
+                    status="pending"
+                )
         
         logger.info(f"Пост для '{day_name_ru}' сгенерирован успешно")
         return post_text, photo_paths
@@ -75,8 +104,9 @@ class PostService:
         photo_paths: List[str],
         prompt: str,
         admin_id: Optional[int] = None,
-        request_type: str = "publish_now"
-    ) -> Tuple[str, List[str]]:
+        request_type: str = "publish_now",
+        day_of_week: Optional[str] = None
+    ) -> Tuple[str, List[str], Optional[str]]:
         """
         Генерирует пост на основе фотографий и промпта
         
@@ -85,9 +115,10 @@ class PostService:
             prompt: Промпт пользователя
             admin_id: ID администратора (для истории)
             request_type: Тип запроса (для истории)
+            day_of_week: День недели (для запланированных постов)
             
         Returns:
-            Кортеж (текст поста, список путей к фото)
+            Кортеж (текст поста, список путей к фото, request_id)
         """
         logger.info(f"Генерация поста из {len(photo_paths)} фото с промптом: {prompt[:50]}...")
         
@@ -114,22 +145,6 @@ class PostService:
             context=context_from_history if context_from_history else None
         )
         
-        # Сохраняем в историю
-        if self.post_history_service and admin_id:
-            request_id = f"{request_type}_{time.time()}"
-            self.post_history_service.add_request(
-                request_id=request_id,
-                admin_id=admin_id,
-                request_type=request_type,
-                prompt=prompt,
-                photos_count=len(photo_paths)
-            )
-            self.post_history_service.update_request(
-                request_id=request_id,
-                generated_post=post_text,
-                status="pending"
-            )
-        
         # Применяем очистку и форматирование
         from services.ai_service import clean_ai_response, markdown_to_html
         post_text = clean_ai_response(post_text)
@@ -138,8 +153,26 @@ class PostService:
         if len(post_text) > 900:
             post_text = post_text[:900] + "..."
         
-        logger.info(f"Пост сгенерирован: {len(post_text)} символов")
-        return post_text, photo_paths
+        # Сохраняем в историю
+        request_id = None
+        if self.post_history_service and admin_id:
+            request_id = f"{request_type}_{time.time()}"
+            self.post_history_service.add_request(
+                request_id=request_id,
+                admin_id=admin_id,
+                request_type=request_type,
+                prompt=prompt,
+                photos_count=len(photo_paths),
+                day_of_week=day_of_week
+            )
+            self.post_history_service.update_request(
+                request_id=request_id,
+                generated_post=post_text,
+                status="pending"
+            )
+        
+        logger.info(f"Пост сгенерирован: {len(post_text)} символов, request_id: {request_id}")
+        return post_text, photo_paths, request_id
     
     async def refine_post(
         self,
@@ -270,6 +303,17 @@ class PostService:
                 status="published",
                 published_at=published_at
             )
+            
+            # Автоматическая адаптация промптов на основе обратной связи
+            # Адаптируем каждые 10 опубликованных постов
+            self.post_history_service._update_stats()  # Обновляем статистику перед проверкой
+            stats = self.post_history_service.stats
+            published_count = stats.get("published_posts", 0)
+            
+            if published_count > 0 and published_count % 10 == 0:
+                logger.info(f"Запуск автоматической адаптации промптов на основе обратной связи (опубликовано: {published_count})...")
+                if hasattr(self.ai_service, 'prompt_config_service') and self.ai_service.prompt_config_service:
+                    self.ai_service.prompt_config_service.auto_adapt_prompts(self.post_history_service)
         
         logger.info(f"Пост опубликован. Результаты: {results}")
         return results
