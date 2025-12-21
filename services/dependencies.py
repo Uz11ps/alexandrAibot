@@ -1,68 +1,99 @@
-"""Управление зависимостями и глобальными сервисами"""
+"""Модуль для управления зависимостями и инициализации сервисов"""
+import logging
 from typing import Optional
-from services.ai_service import AIService
-from services.file_service import FileService
-from services.telegram_service import TelegramService
-from services.vk_service import VKService
-from services.post_service import PostService
-from services.scheduler_service import SchedulerService
-from services.google_drive_service import GoogleDriveService
-from services.employee_service import EmployeeService
-from services.source_service import SourceService
-from services.source_parser_service import SourceParserService
-from services.scheduled_posts_service import ScheduledPostsService
-from services.prompt_config_service import PromptConfigService
-from services.post_history_service import PostHistoryService
-from services.notification_settings_service import NotificationSettingsService
 
-# Глобальные экземпляры сервисов
-ai_service: Optional[AIService] = None
-file_service: Optional[FileService] = None
-telegram_service: Optional[TelegramService] = None
-vk_service: Optional[VKService] = None
-post_service: Optional[PostService] = None
-scheduler_service: Optional[SchedulerService] = None
-employee_service: Optional[EmployeeService] = None
-google_drive_service: Optional[GoogleDriveService] = None
-source_service: Optional[SourceService] = None
-source_parser_service: Optional[SourceParserService] = None
-scheduled_posts_service: Optional[ScheduledPostsService] = None
-prompt_config_service: Optional[PromptConfigService] = None
-post_history_service: Optional[PostHistoryService] = None
-notification_settings_service: Optional[NotificationSettingsService] = None
+logger = logging.getLogger(__name__)
+
+# Глобальные переменные для сервисов
+telegram_service: Optional = None
+ai_service: Optional = None
+post_service: Optional = None
+file_service: Optional = None
+employee_service: Optional = None
+scheduler_service: Optional = None
+scheduled_posts_service: Optional = None
+prompt_config_service: Optional = None
+source_service: Optional = None
+source_parser_service: Optional = None
+vk_service: Optional = None
+post_history_service: Optional = None
 
 
-def init_services(bot, telegram_service_instance: TelegramService):
+def init_services(bot, telegram_service_instance):
     """Инициализирует все сервисы"""
-    global ai_service, file_service, telegram_service, vk_service
-    global post_service, scheduler_service, employee_service, google_drive_service
-    global source_service, source_parser_service, scheduled_posts_service, prompt_config_service
-    global post_history_service, notification_settings_service
+    global telegram_service, ai_service, post_service, file_service
+    global employee_service, scheduler_service, scheduled_posts_service
+    global prompt_config_service, source_service, source_parser_service
+    global vk_service, post_history_service
     
-    # Инициализируем сервис промптов первым
+    logger.info("Инициализация сервисов...")
+    
+    # Базовые сервисы без зависимостей
+    from services.prompt_config_service import PromptConfigService
+    from services.file_service import FileService
+    from services.google_drive_service import GoogleDriveService
+    from services.scheduled_posts_service import ScheduledPostsService
+    from services.source_service import SourceService
+    from services.post_history_service import PostHistoryService
+    
     prompt_config_service = PromptConfigService()
+    logger.info("PromptConfigService инициализирован")
+    
+    # Google Drive (опционально)
+    google_drive_service = None
+    try:
+        google_drive_service = GoogleDriveService()
+        logger.info("GoogleDriveService инициализирован")
+    except Exception as e:
+        logger.warning(f"GoogleDriveService не инициализирован: {e}")
+    
+    file_service = FileService(google_drive_service=google_drive_service)
+    logger.info("FileService инициализирован")
+    
+    scheduled_posts_service = ScheduledPostsService()
+    logger.info("ScheduledPostsService инициализирован")
+    
+    source_service = SourceService()
+    logger.info("SourceService инициализирован")
+    
+    post_history_service = PostHistoryService()
+    logger.info("PostHistoryService инициализирован")
+    
+    # Сервисы с зависимостями
+    from services.ai_service import AIService
+    from services.vk_service import VKService
+    from services.employee_service import EmployeeService
+    from services.source_parser_service import SourceParserService
     
     ai_service = AIService(prompt_config_service=prompt_config_service)
+    logger.info("AIService инициализирован")
     
-    # Инициализируем Google Drive сервис
-    google_drive_service = GoogleDriveService()
-    
-    # Инициализируем FileService с Google Drive
-    file_service = FileService(google_drive_service=google_drive_service)
+    vk_service = VKService(google_drive_service=google_drive_service)
+    logger.info("VKService инициализирован")
     
     telegram_service = telegram_service_instance
-    vk_service = VKService(google_drive_service=google_drive_service)
+    logger.info("TelegramService установлен")
+    
+    employee_service = EmployeeService(telegram_service=telegram_service)
+    logger.info("EmployeeService инициализирован")
+    
+    source_parser_service = SourceParserService(vk_service=vk_service)
+    logger.info("SourceParserService инициализирован")
+    
+    # PostService требует ai_service, telegram_service, vk_service, file_service, post_history_service
+    from services.post_service import PostService
     post_service = PostService(
         ai_service=ai_service,
-        file_service=file_service,
         telegram_service=telegram_service,
-        vk_service=vk_service
+        vk_service=vk_service,
+        file_service=file_service,
+        post_history_service=post_history_service
     )
+    logger.info("PostService инициализирован")
+    
+    # SchedulerService требует post_service
+    from services.scheduler_service import SchedulerService
     scheduler_service = SchedulerService(post_service=post_service)
-    employee_service = EmployeeService(telegram_service)
-    source_service = SourceService()
-    source_parser_service = SourceParserService(vk_service=vk_service)
-    scheduled_posts_service = ScheduledPostsService()
-    post_history_service = PostHistoryService()
-    notification_settings_service = NotificationSettingsService()
-
+    logger.info("SchedulerService инициализирован")
+    
+    logger.info("Все сервисы успешно инициализированы")

@@ -1,591 +1,275 @@
-"""Сервис для генерации и управления постами"""
+"""Сервис для работы с постами"""
 import logging
+import time
+from typing import List, Tuple, Optional, Dict
 from datetime import datetime
-from typing import Optional, List
-from pathlib import Path
-
-from services.ai_service import AIService
-from services.file_service import FileService
-from services.telegram_service import TelegramService
-from services.vk_service import VKService
-
-logger = logging.getLogger(__name__)
 
 logger = logging.getLogger(__name__)
 
 
 class PostService:
-    """Сервис для генерации и публикации постов"""
+    """Сервис для генерации, редактирования и публикации постов"""
     
     def __init__(
         self,
-        ai_service: AIService,
-        file_service: FileService,
-        telegram_service: TelegramService,
-        vk_service: VKService
+        ai_service,
+        telegram_service,
+        vk_service,
+        file_service,
+        post_history_service=None
     ):
         self.ai_service = ai_service
-        self.file_service = file_service
         self.telegram_service = telegram_service
         self.vk_service = vk_service
+        self.file_service = file_service
+        self.post_history_service = post_history_service
     
-    async def generate_monday_post(self) -> tuple[str, List[str]]:
-        """
-        Генерирует пост для понедельника (отчет по объектам)
-        
-        Returns:
-            Кортеж (текст поста, список путей к фотографиям)
-        """
-        try:
-            logger.info("Начало генерации поста для понедельника")
-            
-            # Получаем неиспользованные фотографии
-            logger.info("Получение фотографий...")
-            photos = await self.file_service.get_unused_photos(limit=5)
-            logger.info(f"Получено фотографий: {len(photos)}")
-            
-            if not photos:
-                logger.warning("Нет доступных фотографий для поста")
-                return "Нет доступных фотографий для создания отчета.", []
-            
-            # Анализируем фотографии через AI
-            logger.info(f"Начало анализа {len(photos)} фотографий через AI...")
-            photos_descriptions = []
-            ai_available = True
-            
-            for i, photo in enumerate(photos, 1):
-                try:
-                    logger.info(f"Анализ фотографии {i}/{len(photos)}: {photo.name}")
-                    description = await self.ai_service.analyze_photo(str(photo))
-                    photos_descriptions.append(description)
-                    await self.file_service.mark_file_as_used(photo)
-                    logger.info(f"Фотография {i} успешно проанализирована")
-                except Exception as e:
-                    error_str = str(e)
-                    logger.error(f"Ошибка при анализе фото {photo}: {e}")
-                    
-                    # Если это ошибка региона, используем fallback
-                    if "unsupported_country_region_territory" in error_str or "403" in error_str:
-                        ai_available = False
-                        photos_descriptions.append(f"Фотография: {photo.name}")
-                    else:
-                        photos_descriptions.append(f"Фотография: {photo.name}")
-            
-            logger.info(f"Анализ завершен. Получено описаний: {len(photos_descriptions)}")
-            
-            # Формируем промпт для генерации поста
-            logger.info("Формирование промпта для генерации поста...")
-            prompt = """Создай КОРОТКИЙ отчетный пост о текущих объектах компании "Археон".
-Включи описание работ, сложности участков, способы решения проблем, ошибки клиентов и рекомендации.
-
-ТРЕБОВАНИЯ:
-- Максимум 250-300 слов
-- Используй много эмодзи (📊 🏗️ ✅ ⚠️ 💡 📸 и другие)
-- Короткие абзацы
-- Структурированный текст с эмодзи для выделения"""
-            
-            context = "\n\n".join(photos_descriptions)
-            logger.info(f"Контекст подготовлен (длина: {len(context)} символов)")
-            
-            # Генерируем текст поста
-            logger.info("Генерация текста поста через AI...")
-            try:
-                post_text = await self.ai_service.generate_post_text(
-                    prompt=prompt,
-                    context=context,
-                    photos_description="\n".join(photos_descriptions)
-                )
-                logger.info(f"Текст поста успешно сгенерирован (длина: {len(post_text)} символов)")
-            except Exception as e:
-                error_str = str(e)
-                logger.error(f"Ошибка при генерации текста поста: {e}")
-                
-                # Если AI недоступен, создаем базовый пост
-                if "unsupported_country_region_territory" in error_str or "403" in error_str or "таймаут" in error_str.lower() or "timeout" in error_str.lower():
-                    logger.warning("Создание базового поста без AI")
-                    post_text = (
-                        f"📊 Отчет по объектам компании «Археон»\n\n"
-                        f"На этой неделе мы работали над {len(photos)} объектом(ами).\n\n"
-                        f"📸 Фотографии объектов прикреплены.\n\n"
-                        f"Наши специалисты продолжают качественно выполнять все работы, "
-                        f"соблюдая сроки и стандарты качества.\n\n"
-                        f"⚠️ Примечание: Из-за технических ограничений детальный анализ через AI временно недоступен. "
-                        f"Для получения полного отчета свяжитесь с нашими специалистами."
-                    )
-                else:
-                    raise
-            
-            logger.info("Генерация поста завершена успешно")
-            return post_text, [str(photo) for photo in photos]
-        
-        except Exception as e:
-            logger.error(f"Ошибка при генерации поста понедельника: {e}")
-            # Возвращаем базовый пост даже при ошибке
-            return (
-                f"📊 Отчет по объектам компании «Археон»\n\n"
-                f"Произошла ошибка при генерации поста: {str(e)}\n\n"
-                f"Пожалуйста, создайте пост вручную или проверьте настройки AI сервиса."
-            ), []
+    async def generate_monday_post(self) -> Tuple[str, List[str]]:
+        """Генерирует пост для понедельника"""
+        return await self._generate_post_by_day("monday", "понедельник")
     
-    async def generate_tuesday_post(self) -> tuple[str, List[str]]:
-        """
-        Генерирует пост для вторника (экспертная статья)
-        
-        Returns:
-            Кортеж (текст поста, список путей к документам)
-        """
-        try:
-            # Получаем фотографии для визуального оформления
-            photos = await self.file_service.get_unused_photos(limit=1)
-            photo_paths = []
-            
-            # Получаем документы из папки "Законы"
-            law_documents = await self.file_service.get_law_documents()
-            
-            # Получаем черновики сотрудников
-            drafts = await self.file_service.get_draft_files()
-            
-            context_parts = []
-            
-            # Читаем содержимое документов (пока только текстовые файлы)
-            for doc in law_documents:
-                if doc.suffix == '.txt':
-                    try:
-                        content = await self.file_service.read_file_content(doc)
-                        context_parts.append(f"Документ {doc.name}:\n{content}")
-                    except Exception as e:
-                        logger.error(f"Ошибка при чтении документа {doc}: {e}")
-            
-            for draft in drafts:
-                try:
-                    content = await self.file_service.read_file_content(draft)
-                    context_parts.append(f"Черновик {draft.name}:\n{content}")
-                except Exception as e:
-                    logger.error(f"Ошибка при чтении черновика {draft}: {e}")
-            
-            prompt = """Создай КОРОТКУЮ экспертную статью по земельным вопросам для компании "Археон".
-Выдели изменения в законодательстве, важные моменты для клиентов.
-
-ТРЕБОВАНИЯ:
-- Максимум 250-300 слов
-- Используй много эмодзи (📚 ⚖️ 📋 ✅ 💡 и другие)
-- Короткие абзацы
-- Структурированный текст с эмодзи для выделения ключевых моментов"""
-            
-            context = "\n\n".join(context_parts) if context_parts else None
-            
-            post_text = await self.ai_service.generate_post_text(
-                prompt=prompt,
-                context=context
-            )
-            
-            # Если есть фотографии, используем их
-            if photos:
-                photo_paths = [str(photos[0])]
-                await self.file_service.mark_file_as_used(photos[0])
-            
-            return post_text, photo_paths
-        
-        except Exception as e:
-            logger.error(f"Ошибка при генерации поста вторника: {e}")
-            raise
+    async def generate_tuesday_post(self) -> Tuple[str, List[str]]:
+        """Генерирует пост для вторника"""
+        return await self._generate_post_by_day("tuesday", "вторник")
     
-    async def generate_wednesday_post(self, content_type: str = "report") -> tuple[str, List[str]]:
-        """
-        Генерирует пост для среды
+    async def generate_wednesday_post(self) -> Tuple[str, List[str]]:
+        """Генерирует пост для среды"""
+        return await self._generate_post_by_day("wednesday", "среду")
+    
+    async def generate_thursday_post(self) -> Tuple[str, List[str]]:
+        """Генерирует пост для четверга"""
+        return await self._generate_post_by_day("thursday", "четверг")
+    
+    async def generate_friday_post(self) -> Tuple[str, List[str]]:
+        """Генерирует пост для пятницы"""
+        return await self._generate_post_by_day("friday", "пятницу")
+    
+    async def generate_saturday_post(self) -> Tuple[str, List[str]]:
+        """Генерирует пост для субботы"""
+        return await self._generate_post_by_day("saturday", "субботу")
+    
+    async def _generate_post_by_day(self, day: str, day_name_ru: str) -> Tuple[str, List[str]]:
+        """Универсальный метод для генерации поста по дню недели"""
+        logger.info(f"Начало генерации поста для '{day_name_ru}'")
         
-        Args:
-            content_type: Тип контента ("report" или "meme")
-            
-        Returns:
-            Кортеж (текст поста, список путей к файлам)
-        """
-        if content_type == "report":
-            return await self.generate_monday_post()  # Аналогично понедельнику
+        # Получаем неиспользованные фото
+        photos = await self.file_service.get_unused_photos(limit=3)
+        photo_paths = [str(p) for p in photos] if photos else []
+        
+        # Генерируем промпт для дня недели
+        prompt = f"Создай отчетный пост о работах на объекте для {day_name_ru}"
+        
+        # Генерируем пост
+        if photo_paths:
+            post_text, _ = await self._generate_post_from_photo_and_prompt(photo_paths, prompt)
         else:
-            # Генерируем мем
-            meme_idea = await self.ai_service.generate_meme_idea(
-                "строительство и земельные работы"
-            )
-            return f"Идея для мема:\n{meme_idea}", []
-    
-    async def generate_thursday_post(self) -> tuple[str, List[str]]:
-        """
-        Генерирует пост для четверга (ответы на частые вопросы)
-        
-        Returns:
-            Кортеж (текст поста, список путей к файлам)
-        """
-        try:
-            # Получаем фотографии для визуального оформления
-            photos = await self.file_service.get_unused_photos(limit=1)
-            photo_paths = []
-            
-            topics = [
-                "отступы от границ участка",
-                "ЛПХ (личное подсобное хозяйство)",
-                "СНТ (садовое некоммерческое товарищество)",
-                "дачная амнистия",
-                "кадастровые ошибки",
-                "фундамент и его особенности"
-            ]
-            
-            prompt = f"""Создай КОРОТКИЙ полезный пост на тему частых вопросов клиентов.
-Темы для освещения: {', '.join(topics)}.
-
-ТРЕБОВАНИЯ:
-- Максимум 250-300 слов
-- Используй много эмодзи (❓ 💡 ✅ 📋 🏠 и другие)
-- Короткие абзацы
-- Практические советы с эмодзи для выделения"""
-            
             post_text = await self.ai_service.generate_post_text(prompt=prompt)
-            
-            # Если есть фотографии, используем их
-            if photos:
-                photo_paths = [str(photos[0])]
-                await self.file_service.mark_file_as_used(photos[0])
-            
-            return post_text, photo_paths
-        
-        except Exception as e:
-            logger.error(f"Ошибка при генерации поста четверга: {e}")
-            raise
-    
-    async def generate_friday_post(self) -> tuple[str, List[str]]:
-        """
-        Генерирует пост для пятницы (обзор проектов недели)
-        
-        Returns:
-            Кортеж (текст поста, список путей к фотографиям)
-        """
-        try:
-            logger.info("Начало генерации поста для пятницы")
-            
-            # Получаем неиспользованные фотографии
-            logger.info("Получение фотографий...")
-            photos = await self.file_service.get_unused_photos(limit=10)
-            logger.info(f"Получено фотографий: {len(photos)}")
-            
-            if not photos:
-                logger.warning("Нет доступных фотографий для поста")
-                return "Обзор проектов недели будет добавлен позже.", []
-            
-            # Анализируем фотографии через AI
-            logger.info(f"Начало анализа {len(photos)} фотографий через AI...")
-            photos_descriptions = []
-            ai_available = True
-            
-            for i, photo in enumerate(photos, 1):
-                try:
-                    logger.info(f"Анализ фотографии {i}/{len(photos)}: {photo.name}")
-                    description = await self.ai_service.analyze_photo(str(photo))
-                    photos_descriptions.append(description)
-                    await self.file_service.mark_file_as_used(photo)
-                    logger.info(f"Фотография {i} успешно проанализирована")
-                except Exception as e:
-                    error_str = str(e)
-                    logger.error(f"Ошибка при анализе фото {photo}: {e}")
-                    
-                    # Если это ошибка региона, используем fallback
-                    if "unsupported_country_region_territory" in error_str or "403" in error_str:
-                        ai_available = False
-                        photos_descriptions.append(f"Фотография: {photo.name}")
-                    else:
-                        photos_descriptions.append(f"Фотография: {photo.name}")
-            
-            logger.info(f"Анализ завершен. Получено описаний: {len(photos_descriptions)}")
-            
-            # Формируем промпт для генерации поста
-            logger.info("Формирование промпта для генерации поста...")
-            prompt = """Создай КОРОТКИЙ обзорный пост о проектах компании "Археон" на основе предоставленных фотографий.
-Используй ТОЛЬКО информацию из описания фотографий. НЕ придумывай информацию о других объектах или работах.
-
-ТРЕБОВАНИЯ:
-- Максимум 250-300 слов
-- Используй много эмодзи (📸 🏗️ ✨ 🎯 📊 и другие)
-- Короткие абзацы
-- Динамичный стиль с эмодзи для выделения достижений
-- Пост должен точно отражать то, что изображено на фотографиях"""
-            
-            context = "\n\n".join(photos_descriptions)
-            logger.info(f"Контекст подготовлен (длина: {len(context)} символов)")
-            
-            # Генерируем текст поста
-            logger.info("Генерация текста поста через AI...")
-            try:
-                post_text = await self.ai_service.generate_post_text(
-                    prompt=prompt,
-                    context=context,
-                    photos_description="\n".join(photos_descriptions)
-                )
-                logger.info(f"Текст поста успешно сгенерирован (длина: {len(post_text)} символов)")
-            except Exception as e:
-                error_str = str(e)
-                logger.error(f"Ошибка при генерации текста поста: {e}")
-                
-                # Если AI недоступен, создаем базовый пост
-                if "unsupported_country_region_territory" in error_str or "403" in error_str or "таймаут" in error_str.lower() or "timeout" in error_str.lower():
-                    logger.warning("Создание базового поста без AI")
-                    post_text = (
-                        f"📊 Обзор проектов компании «Археон»\n\n"
-                        f"На этой неделе мы работали над {len(photos)} проектом(ами).\n\n"
-                        f"📸 Фотографии объектов прикреплены.\n\n"
-                        f"Наши специалисты продолжают качественно выполнять все работы, "
-                        f"соблюдая сроки и стандарты качества.\n\n"
-                        f"⚠️ Примечание: Из-за технических ограничений детальный анализ через AI временно недоступен. "
-                        f"Для получения полного отчета свяжитесь с нашими специалистами."
-                    )
-                else:
-                    raise
-            
-            logger.info("Генерация поста завершена успешно")
-            return post_text, [str(photo) for photo in photos]
-        
-        except Exception as e:
-            logger.error(f"Ошибка при генерации поста пятницы: {e}")
-            # Возвращаем базовый пост даже при ошибке
-            return (
-                f"📊 Обзор проектов компании «Археон»\n\n"
-                f"Произошла ошибка при генерации поста: {str(e)}\n\n"
-                f"Пожалуйста, создайте пост вручную или проверьте настройки AI сервиса."
-            ), []
-    
-    async def generate_saturday_post(self) -> tuple[str, List[str]]:
-        """
-        Генерирует пост для субботы (услуги компании)
-        
-        Returns:
-            Кортеж (текст поста, список путей к файлам)
-        """
-        try:
-            # Получаем фотографии для визуального оформления
-            photos = await self.file_service.get_unused_photos(limit=1)
-            photo_paths = []
-            
-            services = [
-                "Фундамент",
-                "Межевание",
-                "Сопровождение сделок",
-                "Проекты домов"
-            ]
-            
-            prompt = f"""Создай КОРОТКИЙ пост об услугах компании "Археон".
-Услуги: {', '.join(services)}.
-
-ТРЕБОВАНИЯ:
-- Максимум 250-300 слов
-- Используй много эмодзи (💼 🏗️ ✅ 📋 🎯 и другие)
-- Короткие абзацы
-- Привлекательный стиль с эмодзи для выделения преимуществ"""
-            
-            post_text = await self.ai_service.generate_post_text(prompt=prompt)
-            
-            # Если есть фотографии, используем их
-            if photos:
-                photo_paths = [str(photos[0])]
-                await self.file_service.mark_file_as_used(photos[0])
-            
-            return post_text, photo_paths
-        
-        except Exception as e:
-            logger.error(f"Ошибка при генерации поста субботы: {e}")
-            raise
-    
-    async def send_for_approval(self, post_text: str, photos: List[str], day_of_week: Optional[str] = None) -> int:
-        """
-        Отправляет пост на согласование руководителю
-        
-        Args:
-            post_text: Текст поста
-            photos: Список путей к фотографиям
-            day_of_week: День недели для планирования ("monday", "tuesday", etc.) или None для немедленной публикации
-            
-        Returns:
-            ID сообщения с черновиком
-        """
-        # Проверяем длину текста и обрезаем если слишком длинный
-        MAX_POST_LENGTH = 900  # Строгое ограничение для подписи к фото
-        if len(post_text) > MAX_POST_LENGTH:
-            logger.warning(f"Текст поста слишком длинный ({len(post_text)} символов), обрезаем до {MAX_POST_LENGTH}")
-            # Обрезаем до последнего полного предложения перед лимитом
-            truncated = post_text[:MAX_POST_LENGTH]
-            # Пытаемся найти последнюю точку, восклицательный или вопросительный знак
-            last_sentence_end = max(
-                truncated.rfind('.'),
-                truncated.rfind('!'),
-                truncated.rfind('?')
-            )
-            if last_sentence_end > MAX_POST_LENGTH * 0.8:  # Если нашли в последних 20% текста
-                post_text = truncated[:last_sentence_end + 1]
-            else:
-                post_text = truncated + "..."
-            logger.info(f"Текст обрезан до {len(post_text)} символов")
-        
-        return await self.telegram_service.send_draft_for_approval(post_text, photos, day_of_week)
-    
-    async def publish_approved_post(self, post_text: str, photos: List[str]) -> dict:
-        """
-        Публикует утвержденный пост в VK и Telegram
-        
-        Args:
-            post_text: Текст поста
-            photos: Список путей к фотографиям
-            
-        Returns:
-            Словарь с ID опубликованных постов
-        """
-        results = {}
-        
-        try:
-            logger.info(f"Начало публикации поста. Фотографий: {len(photos) if photos else 0}")
-            if photos:
-                logger.info(f"Пути к фотографиям: {photos}")
-                # Проверяем и нормализуем пути к фотографиям
-                normalized_photos = []
-                for photo_path in photos:
-                    photo_path_obj = Path(photo_path)
-                    if photo_path_obj.exists():
-                        normalized_photos.append(str(photo_path_obj.absolute()))
-                        logger.info(f"Фото найдено: {photo_path_obj.absolute()}")
-                    else:
-                        logger.warning(f"Фото не найдено, пропускаем: {photo_path}")
-                photos = normalized_photos
-                logger.info(f"После проверки осталось {len(photos)} фотографий")
-            
-            # Публикуем в Telegram
-            telegram_id = await self.telegram_service.publish_to_channel(post_text, photos)
-            results['telegram'] = telegram_id
-            
-            # Публикуем в VK
-            logger.info(f"Публикация в VK с фотографиями: {photos}")
-            vk_id = self.vk_service.publish_post(post_text, photos)
-            results['vk'] = vk_id
-            
-            # Архивируем пост
-            post_date = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            await self.file_service.archive_post(post_text, post_date)
-            
-            logger.info(f"Пост опубликован: {results}")
-            return results
-        
-        except Exception as e:
-            logger.error(f"Ошибка при публикации поста: {e}")
-            raise
-    
-    async def _generate_post_from_photo_and_prompt(self, photo_paths: List[str], user_prompt: str) -> tuple[str, List[str]]:
-        """
-        Генерирует пост для функции 'Опубликовать сейчас' на основе фото (одного или нескольких) и промпта от пользователя
-        
-        Args:
-            photo_paths: Список путей к фотографиям (может быть один или несколько)
-            user_prompt: Промпт от пользователя (описание того, какой пост нужно создать)
-            
-        Returns:
-            Кортеж (текст поста, список путей к фотографиям)
-        """
-        try:
-            logger.info(f"Начало генерации поста для 'Опубликовать сейчас'")
-            logger.info(f"Промпт пользователя: {user_prompt}")
-            logger.info(f"Количество фото: {len(photo_paths)}")
-            
-            # Проверяем существование файлов
-            from pathlib import Path
-            valid_photo_paths = []
-            for photo_path in photo_paths:
-                photo_file = Path(photo_path)
-                if photo_file.exists():
-                    valid_photo_paths.append(photo_path)
-                else:
-                    logger.warning(f"Файл фото не найден: {photo_path}")
-            
-            if not valid_photo_paths:
-                return f"Ошибка: ни один файл фотографии не найден", []
-            
-            # Анализируем фото через AI (одно или несколько)
-            logger.info(f"Анализ {len(valid_photo_paths)} фотографий через AI...")
-            if len(valid_photo_paths) == 1:
-                photo_description = await self.ai_service.analyze_photo(valid_photo_paths[0])
-            else:
-                photo_description = await self.ai_service.analyze_multiple_photos(valid_photo_paths)
-            logger.info(f"Описание фото получено (полная длина: {len(photo_description)} символов)")
-            logger.debug(f"Описание фото: {photo_description}")
-            
-            # Формируем промпт для генерации поста
-            # Используем пользовательский промпт как основной запрос, а описание фото как контекст
-            # ВАЖНО: Делаем промпт более конкретным и обязательным к использованию описания фото
-            if len(valid_photo_paths) > 1:
-                prompt = f"""{user_prompt}
-
-КРИТИЧЕСКИ ВАЖНО: Используй ТОЛЬКО информацию из описания фотографий ниже. 
-НЕ придумывай информацию о других объектах или работах, которых нет в описании.
-НЕ используй шаблонные тексты о торговых центрах, солнечных панелях или других объектах, если их нет в описании.
-Пост должен точно отражать то, что изображено на предоставленных фотографиях.
-Учти разные ракурсы и детали с каждой фотографии."""
-            else:
-                prompt = f"""{user_prompt}
-
-КРИТИЧЕСКИ ВАЖНО: Используй ТОЛЬКО информацию из описания фотографии ниже.
-НЕ придумывай информацию о других объектах или работах, которых нет в описании.
-НЕ используй шаблонные тексты о торговых центрах, солнечных панелях или других объектах, если их нет в описании.
-Пост должен точно отражать то, что изображено на предоставленной фотографии."""
-            
-            logger.info(f"Промпт для генерации поста подготовлен (длина: {len(prompt)} символов)")
-            logger.debug(f"Промпт: {prompt}")
-            
-            # Генерируем текст поста, передавая описание фото как photos_description
-            # Используем специальный системный промпт для "Опубликовать сейчас"
-            logger.info("Генерация текста поста через AI...")
-            post_text = await self.ai_service.generate_post_text(
-                prompt=prompt,
-                photos_description=photo_description,
-                use_post_now_prompt=True
-            )
-            
-            logger.info(f"Текст поста сгенерирован (длина: {len(post_text)} символов)")
-            
-            # Применяем очистку и форматирование
-            from services.ai_service import clean_ai_response, markdown_to_html
-            post_text = clean_ai_response(post_text)
+            from services.ai_service import markdown_to_html
             post_text = markdown_to_html(post_text)
-            
-            # Для "Опубликовать сейчас" НЕ обрезаем пост до 900 символов,
-            # так как структура из 4 абзацев важнее ограничения длины
-            # Проверяем только критическую длину (например, 2000 символов для Telegram)
-            if len(post_text) > 2000:
-                logger.warning(f"Пост превышает 2000 символов ({len(post_text)}), обрезаем")
-                post_text = post_text[:2000] + "..."
-            
-            return post_text, valid_photo_paths
-            
-        except Exception as e:
-            logger.error(f"Ошибка при генерации поста для 'Опубликовать сейчас': {e}", exc_info=True)
-            return f"Ошибка при генерации поста: {str(e)}", []
+        
+        logger.info(f"Пост для '{day_name_ru}' сгенерирован успешно")
+        return post_text, photo_paths
     
-    async def refine_post(self, original_post: str, edits: str) -> str:
+    async def _generate_post_from_photo_and_prompt(
+        self,
+        photo_paths: List[str],
+        prompt: str,
+        admin_id: Optional[int] = None,
+        request_type: str = "publish_now"
+    ) -> Tuple[str, List[str]]:
+        """
+        Генерирует пост на основе фотографий и промпта
+        
+        Args:
+            photo_paths: Список путей к фотографиям
+            prompt: Промпт пользователя
+            admin_id: ID администратора (для истории)
+            request_type: Тип запроса (для истории)
+            
+        Returns:
+            Кортеж (текст поста, список путей к фото)
+        """
+        logger.info(f"Генерация поста из {len(photo_paths)} фото с промптом: {prompt[:50]}...")
+        
+        # Получаем контекст из истории для улучшения генерации
+        context_from_history = ""
+        if self.post_history_service:
+            context_from_history = self.post_history_service.get_context_for_generation(prompt)
+        
+        # Анализируем фото
+        if len(photo_paths) == 1:
+            photos_description = await self.ai_service.analyze_photo(photo_paths[0])
+        else:
+            photos_description = await self.ai_service.analyze_multiple_photos(photo_paths)
+        
+        # Добавляем контекст из истории к промпту
+        enhanced_prompt = prompt
+        if context_from_history:
+            enhanced_prompt = f"{prompt}\n\nКонтекст из успешных похожих постов:\n{context_from_history}"
+        
+        # Генерируем пост
+        post_text = await self.ai_service.generate_post_text(
+            prompt=enhanced_prompt,
+            photos_description=photos_description,
+            context=context_from_history if context_from_history else None
+        )
+        
+        # Сохраняем в историю
+        if self.post_history_service and admin_id:
+            request_id = f"{request_type}_{time.time()}"
+            self.post_history_service.add_request(
+                request_id=request_id,
+                admin_id=admin_id,
+                request_type=request_type,
+                prompt=prompt,
+                photos_count=len(photo_paths)
+            )
+            self.post_history_service.update_request(
+                request_id=request_id,
+                generated_post=post_text,
+                status="pending"
+            )
+        
+        # Применяем очистку и форматирование
+        from services.ai_service import clean_ai_response, markdown_to_html
+        post_text = clean_ai_response(post_text)
+        post_text = markdown_to_html(post_text)
+        
+        if len(post_text) > 900:
+            post_text = post_text[:900] + "..."
+        
+        logger.info(f"Пост сгенерирован: {len(post_text)} символов")
+        return post_text, photo_paths
+    
+    async def refine_post(
+        self,
+        original_post: str,
+        edits: str,
+        request_id: Optional[str] = None
+    ) -> str:
         """
         Перерабатывает пост с учетом правок
         
         Args:
             original_post: Исходный текст поста
             edits: Требуемые правки
+            request_id: ID запроса в истории (опционально)
             
         Returns:
             Переработанный текст поста
         """
-        return await self.ai_service.refine_post(original_post, edits)
+        logger.info(f"Переработка поста. Исходная длина: {len(original_post)} символов. Правки: {edits}")
+        refined_post = await self.ai_service.refine_post(original_post, edits)
+        logger.info(f"Пост переработан. Новая длина: {len(refined_post)} символов")
+        
+        # Обновляем историю
+        if self.post_history_service and request_id:
+            self.post_history_service.update_request(
+                request_id=request_id,
+                generated_post=refined_post,
+                status="edited",
+                edits=edits
+            )
+        
+        return refined_post
     
-    async def refine_post_now(self, original_post: str, edits: str) -> str:
+    async def refine_post_now(
+        self,
+        original_post: str,
+        edits: str,
+        request_id: Optional[str] = None
+    ) -> str:
         """
         Перерабатывает пост для функции "Опубликовать сейчас" с учетом правок
-        Сохраняет структуру из 4 абзацев и минимально изменяет текст
         
         Args:
             original_post: Исходный текст поста
             edits: Требуемые правки
+            request_id: ID запроса в истории (опционально)
             
         Returns:
             Переработанный текст поста
         """
-        return await self.ai_service.refine_post_now(original_post, edits)
-
+        logger.info(f"Переработка поста 'Опубликовать сейчас'. Исходная длина: {len(original_post)} символов. Правки: {edits}")
+        refined_post = await self.ai_service.refine_post_now(original_post, edits)
+        logger.info(f"Пост 'Опубликовать сейчас' переработан. Новая длина: {len(refined_post)} символов")
+        
+        # Обновляем историю
+        if self.post_history_service and request_id:
+            self.post_history_service.update_request(
+                request_id=request_id,
+                generated_post=refined_post,
+                status="edited",
+                edits=edits
+            )
+        
+        return refined_post
+    
+    async def send_for_approval(
+        self,
+        post_text: str,
+        photos: List[str],
+        day_of_week: Optional[str] = None
+    ):
+        """
+        Отправляет пост на согласование администратору
+        
+        Args:
+            post_text: Текст поста
+            photos: Список путей к фотографиям
+            day_of_week: День недели (опционально)
+        """
+        logger.info(f"Отправка поста на согласование. Длина текста: {len(post_text)}, фото: {len(photos)}")
+        
+        # Отправляем через telegram_service
+        await self.telegram_service.send_for_approval(post_text, photos, day_of_week=day_of_week)
+    
+    async def publish_approved_post(
+        self,
+        post_text: str,
+        photos: List[str],
+        request_id: Optional[str] = None
+    ) -> Dict[str, str]:
+        """
+        Публикует одобренный пост в Telegram и VK
+        
+        Args:
+            post_text: Текст поста
+            photos: Список путей к фотографиям
+            request_id: ID запроса в истории (опционально)
+            
+        Returns:
+            Словарь с результатами публикации
+        """
+        logger.info(f"Публикация поста. Длина текста: {len(post_text)}, фото: {len(photos)}")
+        
+        results = {}
+        
+        # Публикуем в Telegram
+        try:
+            telegram_result = await self.telegram_service.publish_post(post_text, photos)
+            results['telegram'] = telegram_result or "Опубликовано"
+        except Exception as e:
+            logger.error(f"Ошибка при публикации в Telegram: {e}")
+            results['telegram'] = f"Ошибка: {str(e)}"
+        
+        # Публикуем в VK
+        try:
+            vk_result = await self.vk_service.publish_post(post_text, photos)
+            results['vk'] = vk_result or "Опубликовано"
+        except Exception as e:
+            logger.error(f"Ошибка при публикации в VK: {e}")
+            results['vk'] = f"Ошибка: {str(e)}"
+        
+        # Обновляем историю
+        if self.post_history_service and request_id:
+            published_at = datetime.now().isoformat()
+            self.post_history_service.update_request(
+                request_id=request_id,
+                final_post=post_text,
+                status="published",
+                published_at=published_at
+            )
+        
+        logger.info(f"Пост опубликован. Результаты: {results}")
+        return results
