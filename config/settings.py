@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     # OpenAI
     OPENAI_API_KEY: str
     OPENAI_API_KEYS: Optional[str] = None  # Дополнительные ключи через запятую для ротации
-    OPENAI_MODEL: str = "gpt-4-turbo-preview"
+    OPENAI_MODEL: str = "gpt-5"
     OPENAI_PROXY_ENABLED: bool = False
     OPENAI_PROXY_URL: Optional[str] = None  # Формат: https://user:pass@host:port или список через запятую
     

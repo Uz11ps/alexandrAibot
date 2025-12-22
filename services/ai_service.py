@@ -491,7 +491,7 @@ class AIService:
         }
         
         try:
-            logger.info(f"Отправка запроса на анализ фотографии в OpenAI API (модель: gpt-4o)")
+            logger.info(f"Отправка запроса на анализ фотографии в OpenAI API (модель: gpt-5)")
             logger.info(f"Размер изображения в base64: {len(base64_image)} символов")
             
             # Устанавливаем таймаут для запроса (увеличен для прокси)
@@ -500,7 +500,7 @@ class AIService:
             
             response = await asyncio.wait_for(
                 self.client.chat.completions.create(
-                    model="gpt-4o",  # Используем актуальную модель для анализа изображений
+                    model="gpt-5",  # Используем GPT-5 для анализа изображений
                     messages=[photo_message],
                     max_tokens=500
                 ),
@@ -736,8 +736,8 @@ class AIService:
         }
         
         try:
-            # Используем более новую модель gpt-4o с увеличенным max_tokens для детального анализа
-            model_name = "gpt-4o-2024-11-20"  # Более новая версия с улучшенным reasoning
+            # Используем GPT-5 для детального анализа видео кадров
+            model_name = "gpt-5"  # GPT-5 с улучшенным reasoning и анализом изображений
             logger.info(f"Отправка запроса на анализ кадра {frame_number}/{total_frames} в OpenAI API (модель: {model_name})")
             
             timeout_seconds = 300.0 if self.proxy_enabled else 120.0  # Увеличенный таймаут для детального анализа
@@ -847,8 +847,8 @@ class AIService:
         }
         
         try:
-            # Используем более новую модель gpt-4o с увеличенным max_tokens для детального анализа
-            model_name = "gpt-4o-2024-11-20"  # Более новая версия с улучшенным reasoning
+            # Используем GPT-5 для детального анализа видео кадров
+            model_name = "gpt-5"  # GPT-5 с улучшенным reasoning и анализом изображений
             logger.info(f"Отправка запроса на анализ кадра {frame_number}/{total_frames} в OpenAI API (модель: {model_name})")
             
             timeout_seconds = 300.0 if self.proxy_enabled else 120.0  # Увеличенный таймаут для детального анализа
