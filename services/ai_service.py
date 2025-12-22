@@ -4,6 +4,7 @@ import asyncio
 import re
 from typing import Optional, List, Dict
 from openai import AsyncOpenAI
+from openai import RateLimitError, APIError
 import httpx
 from config.settings import settings
 
@@ -252,6 +253,42 @@ class AIService:
             
             logger.info(f"Генерация текста завершена успешно (длина: {len(result)} символов)")
             return result
+        
+        except RateLimitError as e:
+            error_msg = (
+                f"❌ Превышен лимит запросов к OpenAI API (Rate Limit). "
+                f"Пожалуйста, проверьте:\n"
+                f"1. Лимит запросов в минуту/час на вашем тарифе\n"
+                f"2. Баланс на счету OpenAI\n"
+                f"3. Попробуйте позже или увеличьте лимиты\n\n"
+                f"Детали ошибки: {str(e)}"
+            )
+            logger.error(error_msg)
+            raise Exception(error_msg) from e
+        
+        except APIError as e:
+            error_code = getattr(e, 'status_code', None)
+            error_type = getattr(e, 'code', None)
+            
+            if error_code == 429 or error_type == 'insufficient_quota':
+                error_msg = (
+                    f"❌ Превышена квота OpenAI API. Пожалуйста:\n"
+                    f"1. Проверьте баланс на счету OpenAI (https://platform.openai.com/account/billing)\n"
+                    f"2. Проверьте лимиты вашего тарифа\n"
+                    f"3. Пополните баланс или обновите тариф\n\n"
+                    f"Детали ошибки: {str(e)}"
+                )
+            elif error_code == 401:
+                error_msg = (
+                    f"❌ Неверный API ключ OpenAI. Проверьте OPENAI_API_KEY в настройках."
+                )
+            else:
+                error_msg = (
+                    f"❌ Ошибка OpenAI API (код: {error_code}, тип: {error_type}): {str(e)}"
+                )
+            
+            logger.error(error_msg)
+            raise Exception(error_msg) from e
         
         except asyncio.TimeoutError:
             timeout_used = 180.0 if self.proxy_enabled else 60.0
@@ -511,6 +548,29 @@ class AIService:
             logger.info(f"Анализ фотографии завершен успешно (длина ответа: {len(result)} символов)")
             return result
         
+        except RateLimitError as e:
+            error_msg = (
+                f"❌ Превышен лимит запросов к OpenAI API при анализе фото. "
+                f"Пожалуйста, проверьте баланс и лимиты на https://platform.openai.com/account/billing"
+            )
+            logger.error(error_msg)
+            raise Exception(error_msg) from e
+        
+        except APIError as e:
+            error_code = getattr(e, 'status_code', None)
+            error_type = getattr(e, 'code', None)
+            
+            if error_code == 429 or error_type == 'insufficient_quota':
+                error_msg = (
+                    f"❌ Превышена квота OpenAI API при анализе фото. "
+                    f"Проверьте баланс на https://platform.openai.com/account/billing"
+                )
+            else:
+                error_msg = f"❌ Ошибка OpenAI API при анализе фото (код: {error_code}): {str(e)}"
+            
+            logger.error(error_msg)
+            raise Exception(error_msg) from e
+        
         except asyncio.TimeoutError:
             timeout_used = 180.0 if self.proxy_enabled else 60.0
             logger.error(f"Таймаут при анализе фотографии (превышено {timeout_used} секунд)")
@@ -756,6 +816,29 @@ class AIService:
             logger.info(f"Анализ кадра {frame_number} завершен успешно (длина ответа: {len(result)} символов)")
             return result
         
+        except RateLimitError as e:
+            error_msg = (
+                f"❌ Превышен лимит запросов к OpenAI API при анализе видео кадра {frame_number}. "
+                f"Проверьте баланс на https://platform.openai.com/account/billing"
+            )
+            logger.error(error_msg)
+            raise Exception(error_msg) from e
+        
+        except APIError as e:
+            error_code = getattr(e, 'status_code', None)
+            error_type = getattr(e, 'code', None)
+            
+            if error_code == 429 or error_type == 'insufficient_quota':
+                error_msg = (
+                    f"❌ Превышена квота OpenAI API при анализе видео кадра {frame_number}. "
+                    f"Проверьте баланс на https://platform.openai.com/account/billing"
+                )
+            else:
+                error_msg = f"❌ Ошибка OpenAI API при анализе кадра {frame_number} (код: {error_code}): {str(e)}"
+            
+            logger.error(error_msg)
+            raise Exception(error_msg) from e
+        
         except asyncio.TimeoutError:
             logger.error(f"Таймаут при анализе кадра {frame_number}")
             # Fallback на обычный анализ
@@ -866,6 +949,29 @@ class AIService:
             result = response.choices[0].message.content.strip()
             logger.info(f"Анализ кадра {frame_number} завершен успешно (длина ответа: {len(result)} символов)")
             return result
+        
+        except RateLimitError as e:
+            error_msg = (
+                f"❌ Превышен лимит запросов к OpenAI API при анализе видео кадра {frame_number}. "
+                f"Проверьте баланс на https://platform.openai.com/account/billing"
+            )
+            logger.error(error_msg)
+            raise Exception(error_msg) from e
+        
+        except APIError as e:
+            error_code = getattr(e, 'status_code', None)
+            error_type = getattr(e, 'code', None)
+            
+            if error_code == 429 or error_type == 'insufficient_quota':
+                error_msg = (
+                    f"❌ Превышена квота OpenAI API при анализе видео кадра {frame_number}. "
+                    f"Проверьте баланс на https://platform.openai.com/account/billing"
+                )
+            else:
+                error_msg = f"❌ Ошибка OpenAI API при анализе кадра {frame_number} (код: {error_code}): {str(e)}"
+            
+            logger.error(error_msg)
+            raise Exception(error_msg) from e
         
         except asyncio.TimeoutError:
             logger.error(f"Таймаут при анализе кадра {frame_number}")
