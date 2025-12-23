@@ -238,7 +238,7 @@ class AIService:
                         {"role": "user", "content": user_prompt}
                     ],
                     temperature=0.7,
-                    max_tokens=2000
+                    max_completion_tokens=2000
                 ),
                 timeout=timeout_seconds
             )
@@ -342,7 +342,7 @@ class AIService:
                                         {"role": "user", "content": user_prompt}
                                     ],
                                     temperature=0.7,
-                                    max_tokens=2000
+                                    max_completion_tokens=2000
                                 ),
                                 timeout=timeout_seconds
                             )
@@ -376,7 +376,7 @@ class AIService:
                                         {"role": "user", "content": user_prompt}
                                     ],
                                     temperature=0.7,
-                                    max_tokens=2000
+                                    max_completion_tokens=2000
                                 ),
                                 timeout=timeout_seconds
                             )
@@ -410,7 +410,7 @@ class AIService:
                                 {"role": "user", "content": user_prompt}
                             ],
                             temperature=0.7,
-                            max_tokens=2000
+                            max_completion_tokens=2000
                         ),
                         timeout=timeout_seconds
                     )
@@ -539,7 +539,7 @@ class AIService:
                 self.client.chat.completions.create(
                     model="gpt-5",  # Используем GPT-5 для анализа изображений
                     messages=[photo_message],
-                    max_tokens=500
+                    max_completion_tokens=500
                 ),
                 timeout=timeout_seconds
             )
@@ -806,7 +806,7 @@ class AIService:
                 self.client.chat.completions.create(
                     model=model_name,
                     messages=[photo_message],
-                    max_tokens=1000,  # Увеличенный лимит для более детального описания
+                    max_completion_tokens=1000,  # Увеличенный лимит для более детального описания
                     temperature=0.3  # Более детерминированный ответ для точности
                 ),
                 timeout=timeout_seconds
@@ -940,7 +940,7 @@ class AIService:
                 self.client.chat.completions.create(
                     model=model_name,
                     messages=[photo_message],
-                    max_tokens=1000,  # Увеличенный лимит для более детального описания
+                    max_completion_tokens=1000,  # Увеличенный лимит для более детального описания
                     temperature=0.3  # Более детерминированный ответ для точности
                 ),
                 timeout=timeout_seconds
@@ -1104,7 +1104,7 @@ class AIService:
                         {"role": "user", "content": prompt}
                     ],
                     temperature=0.7,
-                    max_tokens=1500
+                    max_completion_tokens=1500
                 ),
                 timeout=180.0 if self.proxy_enabled else 60.0
             )
@@ -1241,7 +1241,7 @@ class AIService:
                         {"role": "user", "content": user_prompt}
                     ],
                     temperature=0.8,  # Немного выше для большей креативности
-                    max_tokens=2000
+                    max_completion_tokens=2000
                 ),
                 timeout=timeout_seconds
             )
@@ -1287,7 +1287,7 @@ class AIService:
                                         {"role": "user", "content": user_prompt}
                                     ],
                                     temperature=0.8,
-                                    max_tokens=2000
+                                    max_completion_tokens=2000
                                 ),
                                 timeout=timeout_seconds
                             )
@@ -1315,7 +1315,7 @@ class AIService:
                                     {"role": "user", "content": user_prompt}
                                 ],
                                 temperature=0.8,
-                                max_tokens=2000
+                                max_completion_tokens=2000
                             ),
                             timeout=timeout_seconds
                         )
@@ -1348,7 +1348,7 @@ class AIService:
                                 {"role": "user", "content": user_prompt}
                             ],
                             temperature=0.8,
-                            max_tokens=2000
+                            max_completion_tokens=2000
                         ),
                         timeout=180.0
                     )
@@ -1411,7 +1411,7 @@ class AIService:
                         {"role": "user", "content": prompt}
                     ],
                     temperature=0.5,
-                    max_tokens=1000
+                    max_completion_tokens=1000
                 ),
                 timeout=timeout_seconds
             )
@@ -1450,7 +1450,7 @@ class AIService:
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.9,
-                max_tokens=300
+                max_completion_tokens=300
             )
             
             return response.choices[0].message.content.strip()
