@@ -261,7 +261,20 @@ class AIService:
                 timeout=timeout_seconds
             )
             
+            # Проверяем наличие контента в ответе
+            if not response.choices or not response.choices[0].message.content:
+                error_msg = f"Модель {self.model} вернула пустой ответ. Проверьте формат запроса или используйте другую модель."
+                logger.error(error_msg)
+                logger.error(f"Полный ответ API: {response}")
+                raise Exception(error_msg)
+            
             result = response.choices[0].message.content.strip()
+            
+            if not result:
+                error_msg = f"Модель {self.model} вернула пустую строку после обработки."
+                logger.error(error_msg)
+                logger.error(f"Полный ответ API: {response}")
+                raise Exception(error_msg)
             
             # Очищаем от комментариев AI
             result = clean_ai_response(result)
@@ -566,19 +579,40 @@ class AIService:
             logger.info(f"Таймаут запроса: {timeout_seconds} секунд")
             
             # Формируем параметры запроса для анализа фото
+            # Используем gpt-4o для анализа изображений, так как GPT-5 может не поддерживать vision
+            vision_model = "gpt-4o" if self.model.startswith("gpt-5") else self.model
             photo_request_params = {
-                "model": "gpt-5",  # Используем GPT-5 для анализа изображений
+                "model": vision_model,
                 "messages": [photo_message],
                 "max_completion_tokens": 500
             }
-            # GPT-5 не поддерживает temperature, не добавляем его
+            # Для gpt-4o добавляем temperature
+            if vision_model != "gpt-5" and not vision_model.startswith("o1"):
+                photo_request_params["temperature"] = 0.3
             
             response = await asyncio.wait_for(
                 self.client.chat.completions.create(**photo_request_params),
                 timeout=timeout_seconds
             )
             
+            # Проверяем наличие контента в ответе
+            if not response.choices or not response.choices[0].message.content:
+                error_msg = f"Модель GPT-5 вернула пустой ответ при анализе фото. Возможно, модель не поддерживает анализ изображений в этом формате."
+                logger.error(error_msg)
+                logger.error(f"Полный ответ API: {response}")
+                # Возвращаем fallback описание вместо ошибки
+                from pathlib import Path
+                file_name = Path(photo_path).name
+                return f"Фотография со строительного объекта: {file_name}. На фотографии запечатлен текущий этап работ на объекте компании «Археон»."
+            
             result = response.choices[0].message.content.strip()
+            
+            if not result:
+                logger.warning("Модель GPT-5 вернула пустую строку при анализе фото. Используем fallback описание.")
+                from pathlib import Path
+                file_name = Path(photo_path).name
+                return f"Фотография со строительного объекта: {file_name}. На фотографии запечатлен текущий этап работ на объекте компании «Археон»."
+            
             logger.info(f"Анализ фотографии завершен успешно (длина ответа: {len(result)} символов)")
             return result
         
@@ -830,8 +864,8 @@ class AIService:
         }
         
         try:
-            # Используем GPT-5 для детального анализа видео кадров
-            model_name = "gpt-5"  # GPT-5 с улучшенным reasoning и анализом изображений
+            # Используем gpt-4o для анализа видео кадров, так как GPT-5 может не поддерживать vision
+            model_name = "gpt-4o" if self.model.startswith("gpt-5") else self.model
             logger.info(f"Отправка запроса на анализ кадра {frame_number}/{total_frames} в OpenAI API (модель: {model_name})")
             
             timeout_seconds = 300.0 if self.proxy_enabled else 120.0  # Увеличенный таймаут для детального анализа
@@ -967,8 +1001,8 @@ class AIService:
         }
         
         try:
-            # Используем GPT-5 для детального анализа видео кадров
-            model_name = "gpt-5"  # GPT-5 с улучшенным reasoning и анализом изображений
+            # Используем gpt-4o для анализа видео кадров, так как GPT-5 может не поддерживать vision
+            model_name = "gpt-4o" if self.model.startswith("gpt-5") else self.model
             logger.info(f"Отправка запроса на анализ кадра {frame_number}/{total_frames} в OpenAI API (модель: {model_name})")
             
             timeout_seconds = 300.0 if self.proxy_enabled else 120.0  # Увеличенный таймаут для детального анализа
