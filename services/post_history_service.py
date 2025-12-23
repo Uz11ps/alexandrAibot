@@ -28,6 +28,7 @@ class PostHistoryEntry:
     updated_at: str = ""
     published_at: Optional[str] = None
     day_of_week: Optional[str] = None  # Для запланированных постов
+    error: Optional[str] = None  # Ошибка при генерации/публикации
     
     def __post_init__(self):
         if not self.created_at:
@@ -67,7 +68,17 @@ class PostHistoryService:
             if self.history_file.exists():
                 with open(self.history_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                    self.history = [PostHistoryEntry(**entry) for entry in data]
+                    # Фильтруем неизвестные поля при загрузке старых записей
+                    valid_entries = []
+                    for entry in data:
+                        # Создаем словарь только с известными полями
+                        filtered_entry = {k: v for k, v in entry.items() 
+                                        if k in PostHistoryEntry.__annotations__}
+                        try:
+                            valid_entries.append(PostHistoryEntry(**filtered_entry))
+                        except Exception as e:
+                            logger.warning(f"Пропущена некорректная запись в истории: {e}")
+                    self.history = valid_entries
                 logger.info(f"Загружено {len(self.history)} запросов в истории постов")
             else:
                 self.history = []
