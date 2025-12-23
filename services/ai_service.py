@@ -93,6 +93,12 @@ class AIService:
         self.proxy_list = []
         self.current_proxy_index = 0
         
+        # Определяем, поддерживает ли модель параметр temperature
+        # Модели GPT-5/o1 не поддерживают temperature (только дефолтное значение 1)
+        self.supports_temperature = not (settings.OPENAI_MODEL.startswith("gpt-5") or 
+                                         settings.OPENAI_MODEL.startswith("o1") or
+                                         "o1" in settings.OPENAI_MODEL.lower())
+        
         # Подготовка списка API ключей для ротации
         self.api_keys = [settings.OPENAI_API_KEY]
         if settings.OPENAI_API_KEYS:
@@ -136,6 +142,12 @@ class AIService:
         self.model = settings.OPENAI_MODEL
         self.proxy_enabled = settings.OPENAI_PROXY_ENABLED
         self.proxy_url = settings.OPENAI_PROXY_URL
+        
+        # Определяем, поддерживает ли модель параметр temperature
+        # Модели GPT-5/o1 не поддерживают temperature (только дефолтное значение 1)
+        self.supports_temperature = not (settings.OPENAI_MODEL.startswith("gpt-5") or 
+                                         settings.OPENAI_MODEL.startswith("o1") or
+                                         "o1" in settings.OPENAI_MODEL.lower())
     
     def _switch_proxy(self):
         """Переключается на следующий прокси из списка"""
@@ -230,16 +242,22 @@ class AIService:
             timeout_seconds = 180.0 if self.proxy_enabled else 60.0
             logger.info(f"Таймаут запроса: {timeout_seconds} секунд")
             
+            # Формируем параметры запроса
+            request_params = {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                "max_completion_tokens": 2000
+            }
+            
+            # Добавляем temperature только если модель его поддерживает
+            if self.supports_temperature:
+                request_params["temperature"] = 0.7
+            
             response = await asyncio.wait_for(
-                self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    temperature=0.7,
-                    max_completion_tokens=2000
-                ),
+                self.client.chat.completions.create(**request_params),
                 timeout=timeout_seconds
             )
             
@@ -334,16 +352,22 @@ class AIService:
                         logger.info(f"Попытка {proxy_attempt + 1}/{max_proxy_retries} с другим прокси...")
                         try:
                             timeout_seconds = 180.0
+                            # Формируем параметры запроса
+                            retry_request_params = {
+                                "model": self.model,
+                                "messages": [
+                                    {"role": "system", "content": system_prompt},
+                                    {"role": "user", "content": user_prompt}
+                                ],
+                                "max_completion_tokens": 2000
+                            }
+                            
+                            # Добавляем temperature только если модель его поддерживает
+                            if self.supports_temperature:
+                                retry_request_params["temperature"] = 0.7
+                            
                             response = await asyncio.wait_for(
-                                self.client.chat.completions.create(
-                                    model=self.model,
-                                    messages=[
-                                        {"role": "system", "content": system_prompt},
-                                        {"role": "user", "content": user_prompt}
-                                    ],
-                                    temperature=0.7,
-                                    max_completion_tokens=2000
-                                ),
+                                self.client.chat.completions.create(**retry_request_params),
                                 timeout=timeout_seconds
                             )
                             retry_success = True
@@ -368,16 +392,22 @@ class AIService:
                         logger.info(f"Попытка {key_attempt + 1}/{max_key_retries} с другим API ключом и прокси...")
                         try:
                             timeout_seconds = 180.0 if self.proxy_enabled else 60.0
+                            # Формируем параметры запроса
+                            retry_request_params = {
+                                "model": self.model,
+                                "messages": [
+                                    {"role": "system", "content": system_prompt},
+                                    {"role": "user", "content": user_prompt}
+                                ],
+                                "max_completion_tokens": 2000
+                            }
+                            
+                            # Добавляем temperature только если модель его поддерживает
+                            if self.supports_temperature:
+                                retry_request_params["temperature"] = 0.7
+                            
                             response = await asyncio.wait_for(
-                                self.client.chat.completions.create(
-                                    model=self.model,
-                                    messages=[
-                                        {"role": "system", "content": system_prompt},
-                                        {"role": "user", "content": user_prompt}
-                                    ],
-                                    temperature=0.7,
-                                    max_completion_tokens=2000
-                                ),
+                                self.client.chat.completions.create(**retry_request_params),
                                 timeout=timeout_seconds
                             )
                             return response.choices[0].message.content.strip()
@@ -535,12 +565,16 @@ class AIService:
             timeout_seconds = 180.0 if self.proxy_enabled else 60.0
             logger.info(f"Таймаут запроса: {timeout_seconds} секунд")
             
+            # Формируем параметры запроса для анализа фото
+            photo_request_params = {
+                "model": "gpt-5",  # Используем GPT-5 для анализа изображений
+                "messages": [photo_message],
+                "max_completion_tokens": 500
+            }
+            # GPT-5 не поддерживает temperature, не добавляем его
+            
             response = await asyncio.wait_for(
-                self.client.chat.completions.create(
-                    model="gpt-5",  # Используем GPT-5 для анализа изображений
-                    messages=[photo_message],
-                    max_completion_tokens=500
-                ),
+                self.client.chat.completions.create(**photo_request_params),
                 timeout=timeout_seconds
             )
             
@@ -802,13 +836,16 @@ class AIService:
             
             timeout_seconds = 300.0 if self.proxy_enabled else 120.0  # Увеличенный таймаут для детального анализа
             
+            # Формируем параметры запроса для анализа видео кадра
+            video_frame_params = {
+                "model": model_name,
+                "messages": [photo_message],
+                "max_completion_tokens": 1000  # Увеличенный лимит для более детального описания
+            }
+            # GPT-5 не поддерживает temperature, не добавляем его
+            
             response = await asyncio.wait_for(
-                self.client.chat.completions.create(
-                    model=model_name,
-                    messages=[photo_message],
-                    max_completion_tokens=1000,  # Увеличенный лимит для более детального описания
-                    temperature=0.3  # Более детерминированный ответ для точности
-                ),
+                self.client.chat.completions.create(**video_frame_params),
                 timeout=timeout_seconds
             )
             
@@ -936,13 +973,16 @@ class AIService:
             
             timeout_seconds = 300.0 if self.proxy_enabled else 120.0  # Увеличенный таймаут для детального анализа
             
+            # Формируем параметры запроса для анализа видео кадра
+            video_frame_params = {
+                "model": model_name,
+                "messages": [photo_message],
+                "max_completion_tokens": 1000  # Увеличенный лимит для более детального описания
+            }
+            # GPT-5 не поддерживает temperature, не добавляем его
+            
             response = await asyncio.wait_for(
-                self.client.chat.completions.create(
-                    model=model_name,
-                    messages=[photo_message],
-                    max_completion_tokens=1000,  # Увеличенный лимит для более детального описания
-                    temperature=0.3  # Более детерминированный ответ для точности
-                ),
+                self.client.chat.completions.create(**video_frame_params),
                 timeout=timeout_seconds
             )
             
@@ -1096,16 +1136,22 @@ class AIService:
             
             logger.info(f"Переработка поста. Исходная длина: {len(original_post)} символов. Правки: {edits}")
             
+            # Формируем параметры запроса для refine_post_now
+            refine_now_params = {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
+                "max_completion_tokens": 1500
+            }
+            
+            # Добавляем temperature только если модель его поддерживает
+            if self.supports_temperature:
+                refine_now_params["temperature"] = 0.7
+            
             response = await asyncio.wait_for(
-                self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0.7,
-                    max_completion_tokens=1500
-                ),
+                self.client.chat.completions.create(**refine_now_params),
                 timeout=180.0 if self.proxy_enabled else 60.0
             )
             
@@ -1233,16 +1279,22 @@ class AIService:
             
             timeout_seconds = 180.0 if self.proxy_enabled else 60.0
             
+            # Формируем параметры запроса для refine_post
+            refine_params = {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                "max_completion_tokens": 2000
+            }
+            
+            # Добавляем temperature только если модель его поддерживает
+            if self.supports_temperature:
+                refine_params["temperature"] = 0.8  # Немного выше для большей креативности
+            
             response = await asyncio.wait_for(
-                self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    temperature=0.8,  # Немного выше для большей креативности
-                    max_completion_tokens=2000
-                ),
+                self.client.chat.completions.create(**refine_params),
                 timeout=timeout_seconds
             )
             
@@ -1404,15 +1456,21 @@ class AIService:
             
             timeout_seconds = 120.0 if self.proxy_enabled else 60.0
             
+            # Формируем параметры запроса для analyze_sources
+            sources_params = {
+                "model": self.model,
+                "messages": [
+                    {"role": "user", "content": prompt}
+                ],
+                "max_completion_tokens": 1000
+            }
+            
+            # Добавляем temperature только если модель его поддерживает
+            if self.supports_temperature:
+                sources_params["temperature"] = 0.5
+            
             response = await asyncio.wait_for(
-                self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0.5,
-                    max_completion_tokens=1000
-                ),
+                self.client.chat.completions.create(**sources_params),
                 timeout=timeout_seconds
             )
             
@@ -1444,14 +1502,20 @@ class AIService:
 Тема: {topic}
 Опиши визуальную концепцию и текст мема."""
             
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=[
+            # Формируем параметры запроса для summarize_text
+            summarize_params = {
+                "model": self.model,
+                "messages": [
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.9,
-                max_completion_tokens=300
-            )
+                "max_completion_tokens": 300
+            }
+            
+            # Добавляем temperature только если модель его поддерживает
+            if self.supports_temperature:
+                summarize_params["temperature"] = 0.9
+            
+            response = await self.client.chat.completions.create(**summarize_params)
             
             return response.choices[0].message.content.strip()
         
