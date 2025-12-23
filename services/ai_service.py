@@ -579,16 +579,14 @@ class AIService:
             logger.info(f"Таймаут запроса: {timeout_seconds} секунд")
             
             # Формируем параметры запроса для анализа фото
-            # Используем gpt-4o для анализа изображений, так как GPT-5 может не поддерживать vision
-            vision_model = "gpt-4o" if self.model.startswith("gpt-5") else self.model
+            # Используем gpt-5.2 для анализа изображений
+            vision_model = "gpt-5.2"
             photo_request_params = {
                 "model": vision_model,
                 "messages": [photo_message],
                 "max_completion_tokens": 500
             }
-            # Для gpt-4o добавляем temperature
-            if vision_model != "gpt-5" and not vision_model.startswith("o1"):
-                photo_request_params["temperature"] = 0.3
+            # gpt-5.2 не поддерживает temperature, не добавляем его
             
             response = await asyncio.wait_for(
                 self.client.chat.completions.create(**photo_request_params),
@@ -864,8 +862,8 @@ class AIService:
         }
         
         try:
-            # Используем gpt-4o для анализа видео кадров, так как GPT-5 может не поддерживать vision
-            model_name = "gpt-4o" if self.model.startswith("gpt-5") else self.model
+            # Используем gpt-5.2 для анализа видео кадров
+            model_name = "gpt-5.2"
             logger.info(f"Отправка запроса на анализ кадра {frame_number}/{total_frames} в OpenAI API (модель: {model_name})")
             
             timeout_seconds = 300.0 if self.proxy_enabled else 120.0  # Увеличенный таймаут для детального анализа
@@ -1001,8 +999,8 @@ class AIService:
         }
         
         try:
-            # Используем gpt-4o для анализа видео кадров, так как GPT-5 может не поддерживать vision
-            model_name = "gpt-4o" if self.model.startswith("gpt-5") else self.model
+            # Используем gpt-5.2 для анализа видео кадров
+            model_name = "gpt-5.2"
             logger.info(f"Отправка запроса на анализ кадра {frame_number}/{total_frames} в OpenAI API (модель: {model_name})")
             
             timeout_seconds = 300.0 if self.proxy_enabled else 120.0  # Увеличенный таймаут для детального анализа
