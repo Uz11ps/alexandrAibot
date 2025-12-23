@@ -1392,16 +1392,22 @@ class AIService:
                         http_client=http_client
                     )
                     
+                    # Формируем параметры запроса для финальной попытки без прокси
+                    final_retry_params = {
+                        "model": self.model,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt}
+                        ],
+                        "max_completion_tokens": 2000
+                    }
+                    
+                    # Добавляем temperature только если модель его поддерживает
+                    if self.supports_temperature:
+                        final_retry_params["temperature"] = 0.8
+                    
                     response = await asyncio.wait_for(
-                        temp_client.chat.completions.create(
-                            model=self.model,
-                            messages=[
-                                {"role": "system", "content": system_prompt},
-                                {"role": "user", "content": user_prompt}
-                            ],
-                            temperature=0.8,
-                            max_completion_tokens=2000
-                        ),
+                        temp_client.chat.completions.create(**final_retry_params),
                         timeout=180.0
                     )
                     result = response.choices[0].message.content.strip()

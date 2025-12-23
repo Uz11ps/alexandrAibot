@@ -3538,10 +3538,14 @@ async def _generate_post_from_state(message: Message, state: FSMContext):
                     video_description = f"Видео со строительного объекта. [Ошибка при анализе: {str(e)}]"
             
             if photo_paths:
-                if len(photo_paths) == 1:
-                    photo_description = await dependencies.ai_service.analyze_photo(photo_paths[0])
-                else:
-                    photo_description = await dependencies.ai_service.analyze_multiple_photos(photo_paths)
+                try:
+                    if len(photo_paths) == 1:
+                        photo_description = await dependencies.ai_service.analyze_photo(photo_paths[0])
+                    else:
+                        photo_description = await dependencies.ai_service.analyze_multiple_photos(photo_paths)
+                except Exception as e:
+                    logger.error(f"Ошибка при анализе фото: {e}", exc_info=True)
+                    photo_description = f"Фотографии со строительного объекта. [Ошибка при анализе: {str(e)}]"
                 
                 combined_description = f"{photo_description}\n\n{video_description}" if video_description else photo_description
                 
