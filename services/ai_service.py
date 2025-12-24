@@ -612,13 +612,14 @@ class AIService:
             vision_model = "gpt-5.2"
             
             # Подготовка сообщений для Vision
+            analysis_prompt = self._get_photo_analysis_prompt()
             if vision_model.startswith("gpt-5") or "o1" in vision_model.lower():
                 # Для новых моделей объединяем инструкции
                 messages = [
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": f"ИНСТРУКЦИЯ: Проанализируй это фото как технадзор Археон.\n\nЗАДАНИЕ: {prompt}"},
+                            {"type": "text", "text": f"ИНСТРУКЦИЯ: Проанализируй это фото как технадзор Археон.\n\nЗАДАНИЕ: {analysis_prompt}"},
                             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
                         ]
                     }
@@ -915,147 +916,25 @@ class AIService:
             
             timeout_seconds = 300.0 if self.proxy_enabled else 120.0  # Увеличенный таймаут для детального анализа
             
-            # Формируем параметры запроса для анализа видео кадра
-            video_frame_params = {
-                "model": model_name,
-                "messages": [photo_message],
-                "max_completion_tokens": 1000  # Увеличенный лимит для более детального описания
-            }
-            # GPT-5 не поддерживает temperature, не добавляем его
-            
-            response = await asyncio.wait_for(
-                self.client.chat.completions.create(**video_frame_params),
-                timeout=timeout_seconds
-            )
-            
-            result = response.choices[0].message.content.strip()
-            logger.info(f"Анализ кадра {frame_number} завершен успешно (длина ответа: {len(result)} символов)")
-            return result
-        
-        except RateLimitError as e:
-            error_msg = (
-                f"❌ Превышен лимит запросов к OpenAI API при анализе видео кадра {frame_number}. "
-                f"Проверьте баланс на https://platform.openai.com/account/billing"
-            )
-            logger.error(error_msg)
-            raise Exception(error_msg) from e
-        
-        except APIError as e:
-            error_code = getattr(e, 'status_code', None)
-            error_type = getattr(e, 'code', None)
-            
-            if error_code == 429 or error_type == 'insufficient_quota':
-                error_msg = (
-                    f"❌ Превышена квота OpenAI API при анализе видео кадра {frame_number}. "
-                    f"Проверьте баланс на https://platform.openai.com/account/billing"
-                )
-            else:
-                error_msg = f"❌ Ошибка OpenAI API при анализе кадра {frame_number} (код: {error_code}): {str(e)}"
-            
-            logger.error(error_msg)
-            raise Exception(error_msg) from e
-        
-        except asyncio.TimeoutError:
-            logger.error(f"Таймаут при анализе кадра {frame_number}")
-            # Fallback на обычный анализ
-            return await self.analyze_photo(frame_path)
-        
-        except Exception as e:
-            logger.error(f"Ошибка при анализе кадра {frame_number}: {e}")
-            # Fallback на обычный анализ
-            return await self.analyze_photo(frame_path)
-    
-    async def analyze_video_frame(self, frame_path: str, frame_number: int, total_frames: int) -> str:
-        """
-        Анализирует один кадр из видео с улучшенным промптом и более сильной моделью
-        
-        Args:
-            frame_path: Путь к файлу кадра
-            frame_number: Номер кадра (для контекста)
-            total_frames: Общее количество кадров (для контекста)
-            
-        Returns:
-            Детальное описание кадра
-        """
-        import base64
-        from pathlib import Path
-        
-        # Оптимизируем изображение перед отправкой
-        try:
-            from PIL import Image
-            import io
-            
-            with Image.open(frame_path) as img:
-                # Конвертируем в RGB если нужно
-                if img.mode != 'RGB':
-                    img = img.convert('RGB')
-                
-                # Уменьшаем размер если изображение слишком большое
-                max_size = 1024  # Максимальный размер по большей стороне
-                if max(img.size) > max_size:
-                    img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
-                
-                # Сохраняем в буфер с оптимизацией
-                buffer = io.BytesIO()
-                img.save(buffer, format='JPEG', quality=85, optimize=True)
-                image_data = buffer.getvalue()
-        except Exception as e:
-            logger.warning(f"Не удалось оптимизировать изображение кадра, используем оригинал: {e}")
-            with open(frame_path, "rb") as frame_file:
-                image_data = frame_file.read()
-        
-        base64_image = base64.b64encode(image_data).decode('utf-8')
-        
-        # Определяем MIME тип
-        ext = Path(frame_path).suffix.lower()
-        mime_type = {
-            '.jpg': 'image/jpeg',
-            '.jpeg': 'image/jpeg',
-            '.png': 'image/png',
-            '.gif': 'image/gif',
-            '.webp': 'image/webp'
-        }.get(ext, 'image/jpeg')
-        
-        # Улучшенный промпт для анализа кадров видео
-        video_frame_prompt = """Проанализируй этот кадр из видео со строительного объекта компании "Археон".
-
-ВНИМАТЕЛЬНО изучи изображение и опиши:
-1. **Что происходит на объекте**: конкретные действия, процессы, работы
-2. **Этап строительства**: на каком этапе находится проект (подготовка, фундамент, стены, кровля, отделка и т.д.)
-3. **Используемые материалы и технологии**: какие материалы видны, какие технологии применяются
-4. **Детали и особенности**: важные детали, которые могут быть интересны для поста
-5. **Проблемы или сложности**: если видны какие-то проблемы, сложности, особенности участка
-6. **Качество работ**: оценка качества выполнения работ (если применимо)
-
-Будь максимально детальным и конкретным. Опиши все важные элементы, которые видны на кадре. Это кадр из видео, поэтому важно зафиксировать все детали для создания полного описания процесса."""
-        
-        photo_message = {
-            "role": "user",
-            "content": [
-                {
-                    "type": "text",
-                    "text": video_frame_prompt
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:{mime_type};base64,{base64_image}"
+            # Подготовка сообщений для Vision
+            if model_name.startswith("gpt-5") or "o1" in model_name.lower():
+                # Для новых моделей объединяем инструкции
+                messages = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": f"ИНСТРУКЦИЯ: Проанализируй этот кадр из видео со строительного объекта Археон.\n\nЗАДАНИЕ: {video_frame_prompt}"},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                        ]
                     }
-                }
-            ]
-        }
-        
-        try:
-            # Используем gpt-5.2 для анализа видео кадров
-            model_name = "gpt-5.2"
-            logger.info(f"Отправка запроса на анализ кадра {frame_number}/{total_frames} в OpenAI API (модель: {model_name})")
-            
-            timeout_seconds = 300.0 if self.proxy_enabled else 120.0  # Увеличенный таймаут для детального анализа
-            
+                ]
+            else:
+                messages = [photo_message]
+
             # Формируем параметры запроса для анализа видео кадра
             video_frame_params = {
                 "model": model_name,
-                "messages": [photo_message],
+                "messages": messages,
                 "max_completion_tokens": 1000  # Увеличенный лимит для более детального описания
             }
             # GPT-5 не поддерживает temperature, не добавляем его
