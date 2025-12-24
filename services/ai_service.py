@@ -242,14 +242,11 @@ class AIService:
             timeout_seconds = 180.0 if self.proxy_enabled else 60.0
             logger.info(f"Таймаут запроса: {timeout_seconds} секунд")
             
-            # Определяем роль для системного промпта
-            role = "developer" if self.use_developer_role else "system"
-            
             # Формируем параметры запроса
             request_params = {
                 "model": self.model,
                 "messages": [
-                    {"role": role, "content": system_prompt},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
                 "max_completion_tokens": 2000
@@ -266,16 +263,9 @@ class AIService:
             
             # Проверяем наличие контента в ответе
             if not response.choices or not response.choices[0].message.content:
-                error_msg = f"Модель {self.model} вернула пустой ответ. Возможные причины: модель не поддерживает роль '{role}', превышены лимиты или ошибка прокси."
+                error_msg = f"Модель {self.model} вернула пустой ответ. Проверьте формат запроса или используйте другую модель."
                 logger.error(error_msg)
-                try:
-                    import json
-                    logger.error(f"Полный ответ API: {json.dumps(response.model_dump(), ensure_ascii=False)}")
-                except:
-                    logger.error(f"Полный ответ API (raw): {response}")
-                
-                # Если это была попытка с developer ролью и она вернула пустоту, 
-                # попробуем переключиться на system в следующий раз или выдать ошибку сейчас
+                logger.error(f"Полный ответ API: {response}")
                 raise Exception(error_msg)
             
             result = response.choices[0].message.content.strip()
@@ -376,11 +366,10 @@ class AIService:
                         try:
                             timeout_seconds = 180.0
                             # Формируем параметры запроса
-                            role = "developer" if self.use_developer_role else "system"
                             retry_request_params = {
                                 "model": self.model,
                                 "messages": [
-                                    {"role": role, "content": system_prompt},
+                                    {"role": "system", "content": system_prompt},
                                     {"role": "user", "content": user_prompt}
                                 ],
                                 "max_completion_tokens": 2000
@@ -417,11 +406,10 @@ class AIService:
                         try:
                             timeout_seconds = 180.0 if self.proxy_enabled else 60.0
                             # Формируем параметры запроса
-                            role = "developer" if self.use_developer_role else "system"
                             retry_request_params = {
                                 "model": self.model,
                                 "messages": [
-                                    {"role": role, "content": system_prompt},
+                                    {"role": "system", "content": system_prompt},
                                     {"role": "user", "content": user_prompt}
                                 ],
                                 "max_completion_tokens": 2000
@@ -453,20 +441,26 @@ class AIService:
                 logger.info("Все прокси не работают. Пробуем финальную попытку без прокси...")
                 try:
                     # Создаем клиент без прокси
-                    role = "developer" if self.use_developer_role else "system"
                     client_without_proxy = AsyncOpenAI(
                         api_key=self.api_keys[self.current_api_key_index]
                     )
                     timeout_seconds = 60.0  # Обычный таймаут без прокси
+                    # Формируем параметры запроса для финальной попытки без прокси
+                    final_retry_params = {
+                        "model": self.model,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt}
+                        ],
+                        "max_completion_tokens": 2000
+                    }
+                    
+                    # Добавляем temperature только если модель его поддерживает
+                    if self.supports_temperature:
+                        final_retry_params["temperature"] = 0.7
+                    
                     response = await asyncio.wait_for(
-                        client_without_proxy.chat.completions.create(
-                            model=self.model,
-                            messages=[
-                                {"role": role, "content": system_prompt},
-                                {"role": "user", "content": user_prompt}
-                            ],
-                            max_completion_tokens=2000
-                        ),
+                        client_without_proxy.chat.completions.create(**final_retry_params),
                         timeout=timeout_seconds
                     )
                     logger.info("Успешный запрос без прокси!")
@@ -1181,11 +1175,10 @@ class AIService:
             logger.info(f"Переработка поста. Исходная длина: {len(original_post)} символов. Правки: {edits}")
             
             # Формируем параметры запроса для refine_post_now
-            role = "developer" if self.use_developer_role else "system"
             refine_now_params = {
                 "model": self.model,
                 "messages": [
-                    {"role": role, "content": system_prompt},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt}
                 ],
                 "max_completion_tokens": 1500
@@ -1325,11 +1318,10 @@ class AIService:
             timeout_seconds = 180.0 if self.proxy_enabled else 60.0
             
             # Формируем параметры запроса для refine_post
-            role = "developer" if self.use_developer_role else "system"
             refine_params = {
                 "model": self.model,
                 "messages": [
-                    {"role": role, "content": system_prompt},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
                 "max_completion_tokens": 2000
@@ -1377,21 +1369,22 @@ class AIService:
                         logger.info(f"Попытка {proxy_attempt + 1}/{max_proxy_retries} генерации с другим прокси...")
                         try:
                             timeout_seconds = 180.0
-                            role = "developer" if self.use_developer_role else "system"
-                            request_params = {
+                            # Формируем параметры запроса
+                            retry_params = {
                                 "model": self.model,
                                 "messages": [
-                                    {"role": role, "content": system_prompt},
+                                    {"role": "system", "content": system_prompt},
                                     {"role": "user", "content": user_prompt}
                                 ],
                                 "max_completion_tokens": 2000
                             }
                             
+                            # Добавляем temperature только если модель его поддерживает
                             if self.supports_temperature:
-                                request_params["temperature"] = 0.8
+                                retry_params["temperature"] = 0.8
                             
                             response = await asyncio.wait_for(
-                                self.client.chat.completions.create(**request_params),
+                                self.client.chat.completions.create(**retry_params),
                                 timeout=timeout_seconds
                             )
                             result = response.choices[0].message.content.strip()
@@ -1408,25 +1401,26 @@ class AIService:
             for key_attempt in range(max_key_retries):
                 if self._switch_api_key():
                     logger.info(f"Попытка {key_attempt + 1}/{max_key_retries} с другим API ключом и прокси...")
-                    try:
-                        timeout_seconds = 180.0
-                        role = "developer" if self.use_developer_role else "system"
-                        request_params = {
-                            "model": self.model,
-                            "messages": [
-                                {"role": role, "content": system_prompt},
-                                {"role": "user", "content": user_prompt}
-                            ],
-                            "max_completion_tokens": 2000
-                        }
-                        
-                        if self.supports_temperature:
-                            request_params["temperature"] = 0.8
-                        
-                        response = await asyncio.wait_for(
-                            self.client.chat.completions.create(**request_params),
-                            timeout=timeout_seconds
-                        )
+                try:
+                    timeout_seconds = 180.0
+                    # Формируем параметры запроса
+                    retry_params = {
+                        "model": self.model,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt}
+                        ],
+                        "max_completion_tokens": 2000
+                    }
+                    
+                    # Добавляем temperature только если модель его поддерживает
+                    if self.supports_temperature:
+                        retry_params["temperature"] = 0.8
+                    
+                    response = await asyncio.wait_for(
+                        self.client.chat.completions.create(**retry_params),
+                        timeout=timeout_seconds
+                    )
                         result = response.choices[0].message.content.strip()
                         result = clean_ai_response(result)
                         result = markdown_to_html(result)
@@ -1449,11 +1443,10 @@ class AIService:
                     )
                     
                     # Формируем параметры запроса для финальной попытки без прокси
-                    role = "developer" if self.use_developer_role else "system"
                     final_retry_params = {
                         "model": self.model,
                         "messages": [
-                            {"role": role, "content": system_prompt},
+                            {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_prompt}
                         ],
                         "max_completion_tokens": 2000
