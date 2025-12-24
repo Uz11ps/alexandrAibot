@@ -200,14 +200,14 @@ class TelegramService:
                             else:
                                 # Сохраняем фото для черновика
                                 self._draft_photos[sent_messages[0].message_id] = photos.copy()
-                    else:
-                        # Отправляем только текст
-                        sent_message = await self.bot.send_message(
-                            chat_id=admin_id,
-                            text=full_text,
-                            reply_markup=keyboard,
-                            parse_mode="HTML"
-                        )
+                else:
+                    # Отправляем только текст
+                    sent_message = await self.bot.send_message(
+                        chat_id=admin_id,
+                        text=full_text,
+                        reply_markup=keyboard,
+                        parse_mode="HTML"
+                    )
                 
                 logger.info(f"Пост отправлен на согласование администратору {admin_id}")
             except Exception as e:
