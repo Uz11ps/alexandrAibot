@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, timedelta
 import time
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -3153,29 +3153,27 @@ async def post_now_process_prompt(message: Message, state: FSMContext):
                 # Одно фото
                 photo_file = Path(photos[0])
                 if photo_file.exists():
-                    with open(photos[0], 'rb') as photo:
-                        if len(full_text) <= MAX_CAPTION_LENGTH:
-                            sent_message = await message.answer_photo(
-                                photo=photo,
-                                caption=full_text,
-                                reply_markup=keyboard,
-                                parse_mode="HTML"
-                            )
-                        else:
-                            # Текст слишком длинный - отправляем фото с коротким caption и текст отдельно
-                            photo.seek(0)
-                            photo_message = await message.answer_photo(
-                                photo=photo,
-                                caption=f"{header}📝 Полный текст ниже ⬇️",
-                                parse_mode="HTML"
-                            )
-                            sent_message = await message.answer(
-                                text=full_text,
-                                reply_markup=keyboard,
-                                parse_mode="HTML"
-                            )
-                            dependencies.telegram_service._draft_photos[sent_message.message_id] = photos.copy()
+                    if len(full_text) <= MAX_CAPTION_LENGTH:
+                        sent_message = await message.answer_photo(
+                            photo=FSInputFile(photos[0]),
+                            caption=full_text,
+                            reply_markup=keyboard,
+                            parse_mode="HTML"
+                        )
+                    else:
+                        # Текст слишком длинный - отправляем фото с коротким caption и текст отдельно
+                        sent_message_photo = await message.answer_photo(
+                            photo=FSInputFile(photos[0]),
+                            caption=f"{header}📝 Полный текст ниже ⬇️",
+                            parse_mode="HTML"
+                        )
+                        sent_message = await message.answer(
+                            text=full_text,
+                            reply_markup=keyboard,
+                            parse_mode="HTML"
+                        )
                         dependencies.telegram_service._draft_photos[sent_message.message_id] = photos.copy()
+                    dependencies.telegram_service._draft_photos[sent_message.message_id] = photos.copy()
                 else:
                     # Если фото не найдено, отправляем только текст
                     sent_message = await message.answer(
@@ -3189,18 +3187,16 @@ async def post_now_process_prompt(message: Message, state: FSMContext):
                 for i, photo_path in enumerate(photos):
                     photo_file = Path(photo_path)
                     if photo_file.exists():
-                        with open(photo_path, 'rb') as photo_data:
-                            if i == 0 and len(full_text) <= MAX_CAPTION_LENGTH:
-                                # Первое фото с полным текстом в caption
-                                media.append(InputMediaPhoto(
-                                    media=photo_data,
-                                    caption=full_text,
-                                    parse_mode="HTML"
-                                ))
-                            else:
-                                # Остальные фото без caption или с коротким
-                                photo_data.seek(0)
-                                media.append(InputMediaPhoto(media=photo_data))
+                        if i == 0 and len(full_text) <= MAX_CAPTION_LENGTH:
+                            # Первое фото с полным текстом в caption
+                            media.append(InputMediaPhoto(
+                                media=FSInputFile(photo_path),
+                                caption=full_text,
+                                parse_mode="HTML"
+                            ))
+                        else:
+                            # Остальные фото без caption или с коротким
+                            media.append(InputMediaPhoto(media=FSInputFile(photo_path)))
                 
                 if media:
                     sent_messages = await message.answer_media_group(media=media)
@@ -3652,28 +3648,26 @@ async def _generate_post_from_state(message: Message, state: FSMContext):
             if len(photos) == 1:
                 photo_file = Path(photos[0])
                 if photo_file.exists():
-                    with open(photos[0], 'rb') as photo:
-                        if len(full_text) <= MAX_CAPTION_LENGTH:
-                            sent_message = await message.answer_photo(
-                                photo=photo,
-                                caption=full_text,
-                                reply_markup=keyboard,
-                                parse_mode="HTML"
-                            )
-                        else:
-                            photo.seek(0)
-                            photo_message = await message.answer_photo(
-                                photo=photo,
-                                caption=f"{header}📝 Полный текст ниже ⬇️",
-                                parse_mode="HTML"
-                            )
-                            sent_message = await message.answer(
-                                text=full_text,
-                                reply_markup=keyboard,
-                                parse_mode="HTML"
-                            )
-                            dependencies.telegram_service._draft_photos[sent_message.message_id] = photos.copy()
+                    if len(full_text) <= MAX_CAPTION_LENGTH:
+                        sent_message = await message.answer_photo(
+                            photo=FSInputFile(photos[0]),
+                            caption=full_text,
+                            reply_markup=keyboard,
+                            parse_mode="HTML"
+                        )
+                    else:
+                        photo_message = await message.answer_photo(
+                            photo=FSInputFile(photos[0]),
+                            caption=f"{header}📝 Полный текст ниже ⬇️",
+                            parse_mode="HTML"
+                        )
+                        sent_message = await message.answer(
+                            text=full_text,
+                            reply_markup=keyboard,
+                            parse_mode="HTML"
+                        )
                         dependencies.telegram_service._draft_photos[sent_message.message_id] = photos.copy()
+                    dependencies.telegram_service._draft_photos[sent_message.message_id] = photos.copy()
                 else:
                     sent_message = await message.answer(
                         f"📝 <b>Черновик поста для согласования:</b>\n\n{post_text}",
@@ -3685,16 +3679,14 @@ async def _generate_post_from_state(message: Message, state: FSMContext):
                 for i, photo_path in enumerate(photos):
                     photo_file = Path(photo_path)
                     if photo_file.exists():
-                        with open(photo_path, 'rb') as photo_data:
-                            if i == 0 and len(full_text) <= MAX_CAPTION_LENGTH:
-                                media.append(InputMediaPhoto(
-                                    media=photo_data,
-                                    caption=full_text,
-                                    parse_mode="HTML"
-                                ))
-                            else:
-                                photo_data.seek(0)
-                                media.append(InputMediaPhoto(media=photo_data))
+                        if i == 0 and len(full_text) <= MAX_CAPTION_LENGTH:
+                            media.append(InputMediaPhoto(
+                                media=FSInputFile(photo_path),
+                                caption=full_text,
+                                parse_mode="HTML"
+                            ))
+                        else:
+                            media.append(InputMediaPhoto(media=FSInputFile(photo_path)))
                 
                 if media:
                     sent_messages = await message.answer_media_group(media=media)
@@ -3875,28 +3867,26 @@ async def process_edits(message: Message, state: FSMContext):
                     # Одно фото
                     photo_file = Path(original_photo_paths[0])
                     if photo_file.exists():
-                        with open(original_photo_paths[0], 'rb') as photo:
-                            if len(full_text) <= MAX_CAPTION_LENGTH:
-                                sent_message = await message.answer_photo(
-                                    photo=photo,
-                                    caption=full_text,
-                                    reply_markup=keyboard,
-                                    parse_mode="HTML"
-                                )
-                            else:
-                                photo.seek(0)
-                                photo_message = await message.answer_photo(
-                                    photo=photo,
-                                    caption=f"{header}📝 Полный текст ниже ⬇️",
-                                    parse_mode="HTML"
-                                )
-                                sent_message = await message.answer(
-                                    text=full_text,
-                                    reply_markup=keyboard,
-                                    parse_mode="HTML"
-                                )
-                                dependencies.telegram_service._draft_photos[sent_message.message_id] = original_photo_paths.copy()
+                        if len(full_text) <= MAX_CAPTION_LENGTH:
+                            sent_message = await message.answer_photo(
+                                photo=FSInputFile(original_photo_paths[0]),
+                                caption=full_text,
+                                reply_markup=keyboard,
+                                parse_mode="HTML"
+                            )
+                        else:
+                            sent_message_photo = await message.answer_photo(
+                                photo=FSInputFile(original_photo_paths[0]),
+                                caption=f"{header}📝 Полный текст ниже ⬇️",
+                                parse_mode="HTML"
+                            )
+                            sent_message = await message.answer(
+                                text=full_text,
+                                reply_markup=keyboard,
+                                parse_mode="HTML"
+                            )
                             dependencies.telegram_service._draft_photos[sent_message.message_id] = original_photo_paths.copy()
+                        dependencies.telegram_service._draft_photos[sent_message.message_id] = original_photo_paths.copy()
                     else:
                         await message.answer(
                             f"📝 <b>Черновик поста для согласования (после правок):</b>\n\n{refined_post}",
@@ -3909,16 +3899,14 @@ async def process_edits(message: Message, state: FSMContext):
                     for i, photo_path in enumerate(original_photo_paths):
                         photo_file = Path(photo_path)
                         if photo_file.exists():
-                            with open(photo_path, 'rb') as photo_data:
-                                if i == 0 and len(full_text) <= MAX_CAPTION_LENGTH:
-                                    media.append(InputMediaPhoto(
-                                        media=photo_data,
-                                        caption=full_text,
-                                        parse_mode="HTML"
-                                    ))
-                                else:
-                                    photo_data.seek(0)
-                                    media.append(InputMediaPhoto(media=photo_data))
+                            if i == 0 and len(full_text) <= MAX_CAPTION_LENGTH:
+                                media.append(InputMediaPhoto(
+                                    media=FSInputFile(photo_path),
+                                    caption=full_text,
+                                    parse_mode="HTML"
+                                ))
+                            else:
+                                media.append(InputMediaPhoto(media=FSInputFile(photo_path)))
                     
                     if media:
                         sent_messages = await message.answer_media_group(media=media)
