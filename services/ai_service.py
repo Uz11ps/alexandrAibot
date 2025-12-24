@@ -240,15 +240,22 @@ class AIService:
             
             # Устанавливаем таймаут для запроса (увеличен для прокси)
             timeout_seconds = 180.0 if self.proxy_enabled else 60.0
-            logger.info(f"Таймаут запроса: {timeout_seconds} секунд")
+            
+            # Формируем сообщения. Для o1 и новых моделей часто лучше объединять системный промпт с пользовательским
+            if self.model.startswith("gpt-5") or "o1" in self.model.lower():
+                messages = [
+                    {"role": "user", "content": f"ИНСТРУКЦИЯ:\n{system_prompt}\n\nЗАДАНИЕ:\n{user_prompt}"}
+                ]
+            else:
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ]
             
             # Формируем параметры запроса
             request_params = {
                 "model": self.model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
+                "messages": messages,
                 "max_completion_tokens": 2000
             }
             
@@ -271,9 +278,26 @@ class AIService:
             result = response.choices[0].message.content.strip()
             
             if not result:
-                error_msg = f"Модель {self.model} вернула пустую строку после обработки."
+                # Если gpt-5 вернул пустоту, пробуем gpt-4o как надежный резерв
+                logger.warning(f"Модель {self.model} вернула пустой ответ. Пробуем gpt-4o...")
+                request_params["model"] = "gpt-4o"
+                # Для gpt-4o возвращаем системный промпт
+                request_params["messages"] = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ]
+                if self.supports_temperature:
+                    request_params["temperature"] = 0.7
+                
+                response = await asyncio.wait_for(
+                    self.client.chat.completions.create(**request_params),
+                    timeout=timeout_seconds
+                )
+                result = response.choices[0].message.content.strip()
+
+            if not result:
+                error_msg = f"Модель {self.model} и резервная gpt-4o вернули пустые ответы."
                 logger.error(error_msg)
-                logger.error(f"Полный ответ API: {response}")
                 raise Exception(error_msg)
             
             # Очищаем от комментариев AI
@@ -585,11 +609,28 @@ class AIService:
             logger.info(f"Таймаут запроса: {timeout_seconds} секунд")
             
             # Формируем параметры запроса для анализа фото
-            # Используем gpt-5.2 для анализа изображений
             vision_model = "gpt-5.2"
+            
+            # Подготовка сообщений для Vision
+            if vision_model.startswith("gpt-5") or "o1" in vision_model.lower():
+                # Для новых моделей объединяем инструкции
+                messages = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": f"ИНСТРУКЦИЯ: Проанализируй это фото как технадзор Археон.\n\nЗАДАНИЕ: {prompt}"},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                        ]
+                    }
+                ]
+            else:
+                messages = [
+                    {"role": "user", "content": photo_message["content"]}
+                ]
+
             photo_request_params = {
                 "model": vision_model,
-                "messages": [photo_message],
+                "messages": messages,
                 "max_completion_tokens": 500
             }
             # gpt-5.2 не поддерживает temperature, не добавляем его
