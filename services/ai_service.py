@@ -1401,26 +1401,26 @@ class AIService:
             for key_attempt in range(max_key_retries):
                 if self._switch_api_key():
                     logger.info(f"Попытка {key_attempt + 1}/{max_key_retries} с другим API ключом и прокси...")
-                try:
-                    timeout_seconds = 180.0
-                    # Формируем параметры запроса
-                    retry_params = {
-                        "model": self.model,
-                        "messages": [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_prompt}
-                        ],
-                        "max_completion_tokens": 2000
-                    }
-                    
-                    # Добавляем temperature только если модель его поддерживает
-                    if self.supports_temperature:
-                        retry_params["temperature"] = 0.8
-                    
-                    response = await asyncio.wait_for(
-                        self.client.chat.completions.create(**retry_params),
-                        timeout=timeout_seconds
-                    )
+                    try:
+                        timeout_seconds = 180.0
+                        # Формируем параметры запроса
+                        retry_params = {
+                            "model": self.model,
+                            "messages": [
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": user_prompt}
+                            ],
+                            "max_completion_tokens": 2000
+                        }
+                        
+                        # Добавляем temperature только если модель его поддерживает
+                        if self.supports_temperature:
+                            retry_params["temperature"] = 0.8
+                        
+                        response = await asyncio.wait_for(
+                            self.client.chat.completions.create(**retry_params),
+                            timeout=timeout_seconds
+                        )
                         result = response.choices[0].message.content.strip()
                         result = clean_ai_response(result)
                         result = markdown_to_html(result)
