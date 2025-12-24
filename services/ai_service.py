@@ -242,11 +242,14 @@ class AIService:
             timeout_seconds = 180.0 if self.proxy_enabled else 60.0
             logger.info(f"Таймаут запроса: {timeout_seconds} секунд")
             
+            # Определяем роль для системного промпта
+            role = "developer" if self.use_developer_role else "system"
+            
             # Формируем параметры запроса
             request_params = {
                 "model": self.model,
                 "messages": [
-                    {"role": "system", "content": system_prompt},
+                    {"role": role, "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
                 "max_completion_tokens": 2000
@@ -263,9 +266,16 @@ class AIService:
             
             # Проверяем наличие контента в ответе
             if not response.choices or not response.choices[0].message.content:
-                error_msg = f"Модель {self.model} вернула пустой ответ. Проверьте формат запроса или используйте другую модель."
+                error_msg = f"Модель {self.model} вернула пустой ответ. Возможные причины: модель не поддерживает роль '{role}', превышены лимиты или ошибка прокси."
                 logger.error(error_msg)
-                logger.error(f"Полный ответ API: {response}")
+                try:
+                    import json
+                    logger.error(f"Полный ответ API: {json.dumps(response.model_dump(), ensure_ascii=False)}")
+                except:
+                    logger.error(f"Полный ответ API (raw): {response}")
+                
+                # Если это была попытка с developer ролью и она вернула пустоту, 
+                # попробуем переключиться на system в следующий раз или выдать ошибку сейчас
                 raise Exception(error_msg)
             
             result = response.choices[0].message.content.strip()
@@ -1169,10 +1179,11 @@ class AIService:
             logger.info(f"Переработка поста. Исходная длина: {len(original_post)} символов. Правки: {edits}")
             
             # Формируем параметры запроса для refine_post_now
+            role = "developer" if self.use_developer_role else "system"
             refine_now_params = {
                 "model": self.model,
                 "messages": [
-                    {"role": "system", "content": system_prompt},
+                    {"role": role, "content": system_prompt},
                     {"role": "user", "content": prompt}
                 ],
                 "max_completion_tokens": 1500
@@ -1312,10 +1323,11 @@ class AIService:
             timeout_seconds = 180.0 if self.proxy_enabled else 60.0
             
             # Формируем параметры запроса для refine_post
+            role = "developer" if self.use_developer_role else "system"
             refine_params = {
                 "model": self.model,
                 "messages": [
-                    {"role": "system", "content": system_prompt},
+                    {"role": role, "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
                 "max_completion_tokens": 2000
@@ -1425,10 +1437,11 @@ class AIService:
                     )
                     
                     # Формируем параметры запроса для финальной попытки без прокси
+                    role = "developer" if self.use_developer_role else "system"
                     final_retry_params = {
                         "model": self.model,
                         "messages": [
-                            {"role": "system", "content": system_prompt},
+                            {"role": role, "content": system_prompt},
                             {"role": "user", "content": user_prompt}
                         ],
                         "max_completion_tokens": 2000
