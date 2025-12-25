@@ -1,5 +1,7 @@
 """Обработчики команд администратора"""
 import logging
+import re
+import httpx
 from datetime import datetime, timedelta
 import time
 from aiogram import Router, F
@@ -3850,10 +3852,10 @@ async def _generate_post_from_state(message: Message, state: FSMContext):
             
             if photo_paths:
                 try:
-                    if len(photo_paths) == 1:
-                        photo_description = await dependencies.ai_service.analyze_photo(photo_paths[0])
-                    else:
-                        photo_description = await dependencies.ai_service.analyze_multiple_photos(photo_paths)
+                if len(photo_paths) == 1:
+                    photo_description = await dependencies.ai_service.analyze_photo(photo_paths[0])
+                else:
+                    photo_description = await dependencies.ai_service.analyze_multiple_photos(photo_paths)
                 except Exception as e:
                     logger.error(f"Ошибка при анализе фото: {e}", exc_info=True)
                     photo_description = f"Фотографии со строительного объекта. [Ошибка при анализе: {str(e)}]"
@@ -4201,7 +4203,7 @@ async def process_edits(message: Message, state: FSMContext):
                                 parse_mode="HTML"
                             )
                             dependencies.telegram_service._draft_photos[sent_message.message_id] = original_photo_paths.copy()
-                        dependencies.telegram_service._draft_photos[sent_message.message_id] = original_photo_paths.copy()
+                            dependencies.telegram_service._draft_photos[sent_message.message_id] = original_photo_paths.copy()
                     else:
                         await message.answer(
                             f"📝 <b>Черновик поста для согласования (после правок):</b>\n\n{refined_post}",
