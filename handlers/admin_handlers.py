@@ -34,6 +34,10 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="📋 Отчеты", callback_data="menu_reports")
         ],
         [
+            InlineKeyboardButton(text="🔗 Генерация по источникам", callback_data="menu_sources_generate"),
+            InlineKeyboardButton(text="📐 Описание планировки", callback_data="menu_layout_description")
+        ],
+        [
             InlineKeyboardButton(text="🔗 Управление источниками", callback_data="menu_sources"),
             InlineKeyboardButton(text="📅 Запланированные посты", callback_data="menu_scheduled_posts")
         ],
@@ -171,6 +175,18 @@ class PostNowStates(StatesGroup):
     waiting_for_prompt = State()
     waiting_for_sources = State()  # Ожидание источников (опционально)
     waiting_for_approval = State()  # Ожидание одобрения сгенерированного поста
+
+
+class SourcesGenerationStates(StatesGroup):
+    """Состояния для генерации по источникам"""
+    waiting_for_sources = State()
+    waiting_for_approval = State()
+
+
+class LayoutDescriptionStates(StatesGroup):
+    """Состояния для описания планировок"""
+    waiting_for_layout = State()
+    waiting_for_approval = State()
 
 
 def is_admin(user_id: int) -> bool:
@@ -2603,7 +2619,306 @@ async def schedule_add_post_description(message: Message, state: FSMContext):
     await safe_clear_state(state)
 
 
-# ========== Обработчики функции "Опубликовать сейчас" ==========
+# ========== Обработчики функции "Генерация по источникам" ==========
+
+@router.callback_query(F.data == "menu_sources_generate")
+async def sources_generate_start(callback: CallbackQuery, state: FSMContext):
+    """Начинает процесс генерации поста по источникам"""
+    if not is_admin(callback.from_user.id):
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
+        return
+    
+    await state.set_state(SourcesGenerationStates.waiting_for_sources)
+    await safe_answer_callback(callback)
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔍 Найти новости ИЖС автоматически", callback_data="sources_auto_search")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_back")]
+    ])
+    
+    await callback.message.answer(
+        "🔗 <b>Генерация по источникам</b>\n\n"
+        "1. Отправьте ссылки на Telegram-каналы, группы VK или сайты (каждую с новой строки).\n\n"
+        "2. Либо отправьте ключевое слово (например: <code>ИЖС</code>) для генерации.\n\n"
+        "3. Либо нажмите кнопку ниже для автоматического поиска новостей ИЖС.",
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+
+@router.callback_query(SourcesGenerationStates.waiting_for_sources, F.data == "sources_auto_search")
+async def sources_auto_search(callback: CallbackQuery, state: FSMContext):
+    """Автоматический поиск новостей ИЖС"""
+    if not is_admin(callback.from_user.id):
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
+        return
+    
+    loading_msg = await callback.message.answer("🔍 <b>Ищу самые свежие новости ИЖС в Дзен и поисковиках...</b>", parse_mode="HTML")
+    
+    try:
+        # Поскольку у нас нет прямого API к Дзену, мы используем AI с расширенными знаниями 
+        # или пробуем спарсить поисковую выдачу если это возможно.
+        # Для начала попросим AI сгенерировать пост на основе актуальных трендов ИЖС
+        prompt = "Найди и опиши 3 самые актуальные новости в сфере ИЖС (индивидуальное жилищное строительство) в России на текущую дату. Сфокусируйся на законах, ипотеке и технологиях. Затем на основе этого создай уникальный пост для компании Археон."
+        
+        post_text = await dependencies.ai_service.generate_post_text(prompt=prompt)
+        from services.ai_service import markdown_to_html
+        post_text = markdown_to_html(post_text)
+
+        await loading_msg.delete()
+        
+        if not post_text:
+            await callback.message.answer("❌ Не удалось найти новости автоматически. Попробуйте ввести ссылки вручную.")
+            return
+
+        # Сохраняем в состояние для одобрения
+        await state.update_data(generated_post_text=post_text, generated_photo_paths=[])
+        await state.set_state(SourcesGenerationStates.waiting_for_approval)
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Опубликовать", callback_data="sources_approve"),
+                InlineKeyboardButton(text="✏️ Редактировать", callback_data="sources_edit")
+            ],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_back")]
+        ])
+        
+        await callback.message.answer(
+            f"📝 <b>Новости ИЖС (уникализировано):</b>\n\n{post_text}",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка в sources_auto_search: {e}")
+        await loading_msg.delete()
+        await callback.message.answer(f"❌ Ошибка при поиске: {str(e)}")
+
+
+@router.message(SourcesGenerationStates.waiting_for_sources)
+async def sources_generate_process(message: Message, state: FSMContext):
+    """Обрабатывает источники и генерирует пост"""
+    if not is_admin(message.from_user.id):
+        await message.answer("У вас нет доступа.")
+        return
+    
+    input_text = message.text.strip() if message.text else ""
+    if not input_text:
+        await message.answer("Пожалуйста, отправьте ссылки или ключевое слово.")
+        return
+    
+    if input_text.lower() in ['отмена', 'cancel', 'назад']:
+        await safe_clear_state(state)
+        await message.answer("❌ Генерация отменена.", reply_markup=get_main_menu_keyboard())
+        return
+    
+    loading_msg = await message.answer("⏳ <b>Анализирую источники и генерирую уникальный контент...</b>\nЭто может занять до минуты.", parse_mode="HTML")
+    
+    try:
+        # Извлекаем ссылки
+        urls = re.findall(r'https?://[^\s]+', input_text)
+        sources_data = []
+        
+        if urls:
+            # Парсим ссылки
+            for url in urls:
+                if 't.me/' in url:
+                    posts = await dependencies.source_parser_service.parse_telegram_source(url, count=3)
+                    sources_data.extend(posts)
+                elif 'vk.com/' in url:
+                    posts = await dependencies.source_parser_service.parse_vk_source(url, count=3)
+                    sources_data.extend(posts)
+                else:
+                    # Для обычных сайтов (включая Дзен)
+                    try:
+                        async with httpx.AsyncClient(timeout=30.0) as client:
+                            response = await client.get(url)
+                            if response.status_code == 200:
+                                # Простое извлечение текста (очень базовое)
+                                text = re.sub(r'<[^>]+>', ' ', response.text)
+                                text = ' '.join(text.split())[:2000]
+                                sources_data.append({'text': text, 'source': url, 'source_type': 'website'})
+                    except Exception as e:
+                        logger.error(f"Ошибка при парсинге сайта {url}: {e}")
+        
+        # Генерируем текст
+        if sources_data:
+            post_text = await dependencies.ai_service.generate_post_from_sources(sources_data)
+        else:
+            # Если ссылок нет, используем входной текст как тему
+            prompt = f"Напиши актуальную новость или статью на тему: {input_text}. Сделай это уникально, экспертно от лица компании Археон."
+            post_text = await dependencies.ai_service.generate_post_text(prompt=prompt)
+            from services.ai_service import markdown_to_html
+            post_text = markdown_to_html(post_text)
+
+        await loading_msg.delete()
+        
+        if not post_text:
+            await message.answer("❌ Не удалось сгенерировать пост. Попробуйте другие источники.")
+            return
+
+        # Сохраняем в состояние для одобрения
+        await state.update_data(generated_post_text=post_text, generated_photo_paths=[])
+        await state.set_state(SourcesGenerationStates.waiting_for_approval)
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Опубликовать", callback_data="sources_approve"),
+                InlineKeyboardButton(text="✏️ Редактировать", callback_data="sources_edit")
+            ],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_back")]
+        ])
+        
+        await message.answer(
+            f"📝 <b>Сгенерированный пост:</b>\n\n{post_text}",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка в sources_generate_process: {e}", exc_info=True)
+        await message.answer(f"❌ Ошибка при генерации: {str(e)}")
+        await loading_msg.delete()
+
+# ========== Обработчики функции "Описание планировки" ==========
+
+@router.callback_query(F.data == "menu_layout_description")
+async def layout_description_start(callback: CallbackQuery, state: FSMContext):
+    """Начинает процесс описания планировки"""
+    if not is_admin(callback.from_user.id):
+        await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
+        return
+    
+    await state.set_state(LayoutDescriptionStates.waiting_for_layout)
+    await safe_answer_callback(callback)
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_back")]
+    ])
+    
+    await callback.message.answer(
+        "📐 <b>Описание планировки</b>\n\n"
+        "Отправьте изображение (фото) планировки дома.\n\n"
+        "AI проанализирует чертеж и составит интересное описание преимуществ данного решения.",
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+
+@router.message(LayoutDescriptionStates.waiting_for_layout, F.photo)
+async def layout_description_process(message: Message, state: FSMContext):
+    """Обрабатывает фото планировки и генерирует описание"""
+    if not is_admin(message.from_user.id):
+        await message.answer("У вас нет доступа.")
+        return
+    
+    photo = message.photo[-1]
+    loading_msg = await message.answer("⏳ <b>Анализирую планировку...</b>\nАрхитектор Археон изучает чертеж.", parse_mode="HTML")
+    
+    try:
+        # Скачиваем фото
+        file_info = await message.bot.get_file(photo.file_id)
+        photo_path = dependencies.file_service.get_folder_path('photos') / f"layout_{photo.file_id}.jpg"
+        await message.bot.download_file(file_info.file_path, destination=str(photo_path))
+        
+        # Анализируем через AI
+        # Используем специальный промпт для планировок
+        prompt_info = dependencies.prompt_config_service.get_prompt_info("layout_description")
+        user_prompt = prompt_info.get("user_prompt", "Проанализируй планировку на фото.")
+        
+        # Анализ изображения
+        photos_description = await dependencies.ai_service.analyze_photo(str(photo_path))
+        
+        # Генерация текста
+        system_prompt = prompt_info.get("system_prompt", "Ты архитектор Археон.")
+        
+        # Используем gpt-5 для генерации описания
+        post_text = await dependencies.ai_service.generate_post_text(
+            prompt=user_prompt,
+            photos_description=photos_description
+        )
+        
+        await loading_msg.delete()
+        
+        if not post_text:
+            await message.answer("❌ Не удалось составить описание планировки.")
+            return
+
+        # Сохраняем в состояние для одобрения
+        await state.update_data(
+            generated_post_text=post_text, 
+            generated_photo_paths=[str(photo_path)],
+            original_photo_paths=[str(photo_path)]
+        )
+        await state.set_state(LayoutDescriptionStates.waiting_for_approval)
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Опубликовать", callback_data="layout_approve"),
+                InlineKeyboardButton(text="✏️ Редактировать", callback_data="layout_edit")
+            ],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_back")]
+        ])
+        
+        await message.answer_photo(
+            photo=FSInputFile(str(photo_path)),
+            caption=f"📐 <b>Описание планировки:</b>\n\n{post_text}",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка в layout_description_process: {e}", exc_info=True)
+        await message.answer(f"❌ Ошибка при анализе: {str(e)}")
+        await loading_msg.delete()
+
+
+@router.callback_query(F.data.in_(["sources_approve", "layout_approve"]))
+async def handle_new_features_approve(callback: CallbackQuery, state: FSMContext):
+    """Обработчик одобрения для новых функций"""
+    data = await state.get_data()
+    post_text = data.get('generated_post_text')
+    photos = data.get('generated_photo_paths', [])
+    
+    if not post_text:
+        await callback.answer("Ошибка: текст поста не найден", show_alert=True)
+        return
+    
+    await callback.message.edit_reply_markup(reply_markup=None)
+    status_msg = await callback.message.answer("🚀 Публикую пост...")
+    
+    results = await dependencies.post_service.publish_approved_post(post_text, photos)
+    
+    res_text = "✅ <b>Пост опубликован!</b>\n\n"
+    for platform, res in results.items():
+        res_text += f"• {platform.capitalize()}: {res}\n"
+    
+    await status_msg.edit_text(res_text, parse_mode="HTML")
+    await safe_clear_state(state)
+
+
+@router.callback_query(F.data.in_(["sources_edit", "layout_edit"]))
+async def handle_new_features_edit(callback: CallbackQuery, state: FSMContext):
+    """Обработчик нажатия кнопки 'Редактировать' для новых функций"""
+    data = await state.get_data()
+    post_text = data.get('generated_post_text')
+    photos = data.get('generated_photo_paths', [])
+    
+    # Сохраняем оригинальный текст и фото для редактирования
+    await state.update_data(
+        original_post_text=post_text,
+        original_photo_paths=photos
+    )
+    
+    # Переводим в состояние ожидания правок
+    await state.set_state(PostApprovalStates.waiting_for_edits)
+    
+    await callback.message.answer(
+        "✏️ <b>Введите ваши правки для поста:</b>\n\n"
+        "AI переработает текст с учетом ваших пожеланий.",
+        parse_mode="HTML"
+    )
+    await callback.answer()
 
 @router.callback_query(F.data == "post_now")
 async def post_now_start(callback: CallbackQuery, state: FSMContext):

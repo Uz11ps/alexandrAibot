@@ -256,7 +256,7 @@ class AIService:
             request_params = {
                 "model": self.model,
                 "messages": messages,
-                "max_completion_tokens": 2000
+                "max_completion_tokens": 10000  # Увеличено для GPT-5/o1 (рассуждения + вывод)
             }
             
             # Добавляем temperature только если модель его поддерживает
@@ -632,7 +632,7 @@ class AIService:
             photo_request_params = {
                 "model": vision_model,
                 "messages": messages,
-                "max_completion_tokens": 500
+                "max_completion_tokens": 5000  # Увеличено для GPT-5.2
             }
             # gpt-5.2 не поддерживает temperature, не добавляем его
             
@@ -935,7 +935,7 @@ class AIService:
             video_frame_params = {
                 "model": model_name,
                 "messages": messages,
-                "max_completion_tokens": 1000  # Увеличенный лимит для более детального описания
+                "max_completion_tokens": 5000  # Увеличено для более детального описания и рассуждений
             }
             # GPT-5 не поддерживает temperature, не добавляем его
             
