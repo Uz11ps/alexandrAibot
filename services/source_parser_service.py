@@ -139,25 +139,66 @@ class SourceParserService:
             logger.error(f"Ошибка при парсинге Telegram источника {url}: {e}")
             return []
     
+    async def parse_website(self, url: str) -> List[Dict[str, str]]:
+        """
+        Парсит текстовое содержимое веб-сайта (например, Pikabu, Domclick)
+        """
+        import httpx
+        from bs4 import BeautifulSoup
+        
+        try:
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                }
+                response = await client.get(url, headers=headers)
+                if response.status_code == 200:
+                    soup = BeautifulSoup(response.text, 'html.parser')
+                    
+                    # Удаляем скрипты и стили
+                    for script in soup(["script", "style"]):
+                        script.decompose()
+                        
+                    # Извлекаем текст
+                    text = soup.get_text(separator=' ')
+                    # Очищаем лишние пробелы
+                    lines = (line.strip() for line in text.splitlines())
+                    chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+                    text = '\n'.join(chunk for chunk in chunks if chunk)
+                    
+                    # Берем первые 3000 символов (самое важное)
+                    clean_text = text[:3000]
+                    
+                    logger.info(f"Получен текст с сайта {url} ({len(clean_text)} симв.)")
+                    return [{
+                        'text': clean_text,
+                        'source': url,
+                        'source_type': 'website',
+                        'metadata': {'title': soup.title.string if soup.title else 'Без заголовка'}
+                    }]
+        except Exception as e:
+            logger.error(f"Ошибка при парсинге сайта {url}: {e}")
+            
+        return []
+
     async def parse_source(self, source_type: str, url: str, count: int = 10) -> List[Dict[str, str]]:
         """
         Парсит посты из источника по типу
-        
-        Args:
-            source_type: Тип источника ("telegram" или "vk")
-            url: URL источника
-            count: Количество постов для получения
-            
-        Returns:
-            Список словарей с текстами постов
         """
         if source_type == "vk":
             return await self.parse_vk_source(url, count)
         elif source_type == "telegram":
             return await self.parse_telegram_source(url, count)
+        elif source_type == "website":
+            return await self.parse_website(url)
         else:
-            logger.error(f"Неизвестный тип источника: {source_type}")
-            return []
+            # Пытаемся определить по URL
+            if 't.me/' in url:
+                return await self.parse_telegram_source(url, count)
+            elif 'vk.com/' in url:
+                return await self.parse_vk_source(url, count)
+            else:
+                return await self.parse_website(url)
     
     async def parse_all_sources(self, sources: List) -> List[Dict[str, str]]:
         """

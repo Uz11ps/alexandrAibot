@@ -197,6 +197,41 @@ class AIService:
             return True
         return False
     
+    async def make_news_standalone(self, text: str) -> str:
+        """
+        Перерабатывает новость в полностью самостоятельный пост без отсылок к прошлому
+        
+        Args:
+            text: Исходный текст новости
+            
+        Returns:
+            Переработанный текст
+        """
+        if self.prompt_config_service:
+            system_prompt = self.prompt_config_service.get_prompt("standalone_news", "system_prompt")
+        else:
+            system_prompt = "Сделай текст новости самостоятельным, удалив отсылки к прошлым постам."
+            
+        try:
+            request_params = {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Переработай этот текст:\n\n{text}"}
+                ],
+                "max_completion_tokens": 2000
+            }
+            
+            if self.supports_temperature:
+                request_params["temperature"] = 0.5
+                
+            response = await self.client.chat.completions.create(**request_params)
+            result = response.choices[0].message.content.strip()
+            return markdown_to_html(clean_ai_response(result))
+        except Exception as e:
+            logger.error(f"Ошибка в make_news_standalone: {e}")
+            return text
+
     async def generate_post_text(
         self,
         prompt: str,
@@ -1221,16 +1256,23 @@ class AIService:
 
 ВАЖНО: Не копируй текст из источников! Используй их как вдохновение для создания собственного уникального контента."""
         
-        user_prompt = f"""Проанализируй следующие посты из других источников и создай новый, уникальный пост для компании "Археон":
+        user_prompt = f"""Ниже приведены посты из внешних источников. 
+Твоя задача: проанализировать их и создать ОДНУ самостоятельную, уникальную и экспертную новость для компании "Археон".
 
+КРИТИЧЕСКИ ВАЖНО:
+1. Если последний пост (Пост 1) ссылается на предыдущие события ("как мы писали ранее", "продолжение темы"), обязательно найди контекст в предыдущих постах и сделай новость САМОСТОЯТЕЛЬНОЙ.
+2. Читатель не должен догадываться, что это пересказ. Это должно звучать как авторская колонка Археон.
+3. Соблюдай ГЕО-фильтр: Крым и Севастополь — в приоритете.
+4. Отрази влияние на ИЖС (ипотека, законы, цены).
+
+ИСТОЧНИКИ:
 {sources_context}
 
 Создай пост, который:
-- Использует ключевые темы и идеи из анализа
-- НЕ копирует текст напрямую
-- Будет интересен нашей аудитории
-- Соответствует стилю строительной компании "Археон"
-- Короткий, яркий, с эмодзи"""
+- Логически завершен и автономен.
+- НЕ копирует текст напрямую.
+- Экспертный и аналитический.
+- Короткий, яркий, с эмодзи."""
         
         try:
             logger.info(f"Генерация поста на основе анализа {len(source_posts)} постов из источников")
