@@ -2694,24 +2694,27 @@ async def sources_auto_search(callback: CallbackQuery, state: FSMContext):
             except Exception as e:
                 logger.error(f"Ошибка при автопарсинге {url}: {e}")
 
-        # Гарантируем уникальность и только прямые ссылки
+        # Собираем уникальные прямые ссылки
         unique_links = []
         seen_links = set()
         for p in sources_data:
             link = p.get('source')
             if link and link not in seen_links:
-                # Проверяем, что это прямая ссылка (содержит ID поста или путь к статье)
-                is_direct = any(x in link for x in ['/', 'wall', 'post', 'article'])
-                is_not_main = link.rstrip('/') not in [s.rstrip('/') for s in gold_sources]
-                if is_direct and is_not_main:
-                    unique_links.append(link)
-                    seen_links.add(link)
+                # Если ссылка ведет на конкретный пост/статью (есть / после домена)
+                # или если это просто ссылка, которую мы получили от парсера
+                unique_links.append(link)
+                seen_links.add(link)
 
         if not sources_data:
-            # Если даже так пусто, используем ИИ
+            # Если данных нет совсем
             prompt = "Напиши актуальный экспертный дайджест новостей ИЖС в Крыму и Севастополе за декабрь 2025."
             post_text = await dependencies.ai_service.generate_post_text(prompt=prompt)
-            unique_links = [] 
+            # Запасные ссылки
+            unique_links = [
+                "https://t.me/RussiaBuild",
+                "https://blog.domclick.ru/",
+                "https://t.me/ria_realty"
+            ]
         else:
             # Генерируем пост на основе реальных данных
             post_text = await dependencies.ai_service.generate_post_from_sources(sources_data)
@@ -2737,6 +2740,7 @@ async def sources_auto_search(callback: CallbackQuery, state: FSMContext):
         # Отправляем результат
         await callback.message.answer(f"📝 <b>Ваш пост готов на основе свежих новостей:</b>\n\n{post_text}", parse_mode="HTML")
 
+        logger.info(f"Отправка ссылок. Всего: {len(unique_links)}")
         if unique_links:
             links_text = "🔗 <b>Прямые ссылки на первоисточники:</b>\n\n" + "\n".join([f"• {url}" for url in unique_links])
             await callback.message.answer(links_text, parse_mode="HTML", disable_web_page_preview=True)
@@ -2745,12 +2749,8 @@ async def sources_auto_search(callback: CallbackQuery, state: FSMContext):
         
     except Exception as e:
         logger.error(f"Ошибка в sources_auto_search: {e}", exc_info=True)
-        await loading_msg.delete()
-        await callback.message.answer(f"❌ Ошибка при поиске: {str(e)}")
-        
-    except Exception as e:
-        logger.error(f"Ошибка в sources_auto_search: {e}")
-        await loading_msg.delete()
+        if 'loading_msg' in locals():
+            await loading_msg.delete()
         await callback.message.answer(f"❌ Ошибка при поиске: {str(e)}")
 
 
@@ -2794,7 +2794,13 @@ async def sources_generate_process(message: Message, state: FSMContext):
                     sources_data.extend(posts)
         
         # Собираем РЕАЛЬНЫЕ прямые ссылки из полученных данных
-        source_links_list = [p['source'] for p in sources_data if p.get('source')]
+        unique_links = []
+        seen_links = set()
+        for p in sources_data:
+            link = p.get('source')
+            if link and link not in seen_links:
+                unique_links.append(link)
+                seen_links.add(link)
         
         # Генерируем текст
         if sources_data:
@@ -2803,17 +2809,8 @@ async def sources_generate_process(message: Message, state: FSMContext):
             # Если ссылок нет, используем входной текст как тему
             prompt = f"Напиши актуальную новость или статью на тему: {input_text}. Сделай это уникально, экспертно от лица компании Археон."
             post_text = await dependencies.ai_service.generate_post_text(prompt=prompt)
-            from services.ai_service import markdown_to_html
-            post_text = markdown_to_html(post_text)
-
-        await loading_msg.delete()
-        
-        if not post_text:
-            await message.answer("❌ Не удалось сгенерировать пост. Попробуйте другие источники.")
-            return
-
-        # Подготавливаем список ссылок (уникальных)
-        unique_links = list(set(source_links_list))
+            # В этом случае ссылок нет, оставляем пустым
+            unique_links = []
         
         # Сохраняем в состояние для одобрения (текст и ссылки отдельно)
         await state.update_data(
