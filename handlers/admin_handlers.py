@@ -2732,10 +2732,12 @@ async def sources_generate_process(message: Message, state: FSMContext):
         # Извлекаем ссылки
         urls = re.findall(r'https?://[^\s]+', input_text)
         sources_data = []
+        source_links_list = []
         
         if urls:
             # Парсим ссылки
             for url in urls:
+                source_links_list.append(url)
                 if 't.me/' in url:
                     # Берем последние 5 постов для контекста (на случай если новость - продолжение)
                     posts = await dependencies.source_parser_service.parse_telegram_source(url, count=5)
@@ -2772,6 +2774,11 @@ async def sources_generate_process(message: Message, state: FSMContext):
             await message.answer("❌ Не удалось сгенерировать пост. Попробуйте другие источники.")
             return
 
+        # Подготавливаем блок источников для отправки отдельным сообщением
+        sources_block = ""
+        if source_links_list:
+            sources_block = "\n\n📌 <b>Источники:</b>\n" + "\n".join([f"• {url}" for url in set(source_links_list)])
+
         # Сохраняем в состояние для одобрения
         await state.update_data(generated_post_text=post_text, generated_photo_paths=[])
         await state.set_state(SourcesGenerationStates.waiting_for_approval)
@@ -2784,11 +2791,18 @@ async def sources_generate_process(message: Message, state: FSMContext):
             [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_back")]
         ])
         
+        # Отправляем основной пост
         await message.answer(
             f"📝 <b>Сгенерированный пост:</b>\n\n{post_text}",
-            reply_markup=keyboard,
             parse_mode="HTML"
         )
+
+        # Отправляем источники отдельным сообщением, если они есть
+        if sources_block:
+            await message.answer(sources_block, parse_mode="HTML", disable_web_page_preview=True)
+
+        # Отправляем клавиатуру управления
+        await message.answer("Выберите действие:", reply_markup=keyboard)
         
     except Exception as e:
         logger.error(f"Ошибка в sources_generate_process: {e}", exc_info=True)
