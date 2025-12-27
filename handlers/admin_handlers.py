@@ -2650,81 +2650,67 @@ async def sources_generate_start(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(SourcesGenerationStates.waiting_for_sources, F.data == "sources_auto_search")
 async def sources_auto_search(callback: CallbackQuery, state: FSMContext):
-    """Автоматический поиск новостей ИЖС по списку доверенных источников"""
+    """Автоматический поиск новостей ИЖС по расширенному списку источников"""
     if not is_admin(callback.from_user.id):
         await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
         return
     
-    loading_msg = await callback.message.answer("🔍 <b>Ищу свежие новости в RussiaBuild, DomClick, RIA Realty и других источниках...</b>", parse_mode="HTML")
+    loading_msg = await callback.message.answer("🔍 <b>Ищу свежие новости (TG, VK, RSS)...</b>", parse_mode="HTML")
     
     try:
-        # Список "золотых источников" от заказчика
-        gold_sources = [
-            "https://t.me/RussiaBuild",
-            "https://t.me/ria_realty",
-            "https://t.me/house_proekt",
-            "https://blog.domclick.ru/",
-            "https://t.me/m_khusnullin"
+        # Список источников
+        tg_channels = ["RussiaBuild", "ria_realty", "house_proekt", "dars_build", "stroyka_news", "m_khusnullin"]
+        rss_urls = [
+            "https://rssexport.rbc.ru/rbc/news/3/full.rss", 
+            "https://sev.gov.ru/bitrix/rss.php",
+            "https://realty.rbc.ru/rss"
         ]
         
         sources_data = []
         
-        # Парсим каждый источник
-        for url in gold_sources:
+        # 1. Парсим Telegram
+        for ch in tg_channels:
             try:
-                if 't.me/' in url:
-                    # Увеличиваем до 20 постов для максимального охвата
-                    posts = await dependencies.source_parser_service.parse_telegram_source(url, count=20)
-                    source_added_count = 0
-                    for p in posts:
-                        text_lower = p['text'].lower()
-                        # Ключевые слова для приоритета
-                        keywords = ['ижс', 'крым', 'севастополь', 'закон', 'новости', 'стройка', 'дом', 'участок', 'земля', 'ипотека', 'ставка', 'налог']
-                        if any(k in text_lower for k in keywords):
-                            sources_data.append(p)
-                            source_added_count += 1
-                        # Если по фильтрам пусто, берем 3 последних поста этого канала "как есть"
-                        elif source_added_count < 3:
-                            sources_data.append(p)
-                            source_added_count += 1
-                else:
-                    # Исправлен вызов parse_source
-                    posts = await dependencies.source_parser_service.parse_source("website", url)
-                    sources_data.extend(posts)
-            except Exception as e:
-                logger.error(f"Ошибка при автопарсинге {url}: {e}")
+                posts = await dependencies.source_parser_service.parse_telegram_source(f"https://t.me/{ch}", count=10)
+                sources_data.extend(posts)
+            except: continue
 
-        # Собираем уникальные прямые ссылки
+        # 2. Парсим RSS
+        for url in rss_urls:
+            try:
+                news = await dependencies.source_parser_service.fetch_rss(url)
+                sources_data.extend(news)
+            except: continue
+
+        # Фильтруем и собираем ссылки/картинки
+        final_sources = []
         unique_links = []
+        source_images = []
         seen_links = set()
+        
         for p in sources_data:
-            link = p.get('source')
-            if link and link not in seen_links:
-                # Если ссылка ведет на конкретный пост/статью (есть / после домена)
-                # или если это просто ссылка, которую мы получили от парсера
-                unique_links.append(link)
-                seen_links.add(link)
+            text = p.get('text', '').lower()
+            if any(k in text for k in ['ижс', 'крым', 'севастополь', 'закон', 'стройка', 'дом', 'земля', 'ипотека']):
+                final_sources.append(p)
+                link = p.get('source')
+                if link and link not in seen_links:
+                    unique_links.append(link)
+                    seen_links.add(link)
+                if p.get('image') and p['image'] not in source_images:
+                    source_images.append(p['image'])
 
-        if not sources_data:
-            # Если данных нет совсем
-            prompt = "Напиши актуальный экспертный дайджест новостей ИЖС в Крыму и Севастополе за декабрь 2025."
-            post_text = await dependencies.ai_service.generate_post_text(prompt=prompt)
-            # Запасные ссылки
-            unique_links = [
-                "https://t.me/RussiaBuild",
-                "https://blog.domclick.ru/",
-                "https://t.me/ria_realty"
-            ]
+        if not final_sources:
+            post_text = await dependencies.ai_service.generate_post_text("Напиши экспертный дайджест новостей ИЖС Крыма за декабрь 2025.")
+            unique_links = ["https://t.me/RussiaBuild", "https://blog.domclick.ru/"]
         else:
-            # Генерируем пост на основе реальных данных
-            post_text = await dependencies.ai_service.generate_post_from_sources(sources_data)
+            post_text = await dependencies.ai_service.generate_post_from_sources(final_sources)
 
         await loading_msg.delete()
         
-        # Сохраняем в состояние
+        # Сохраняем результат
         await state.update_data(
             generated_post_text=post_text, 
-            generated_photo_paths=[],
+            generated_photo_paths=source_images[:3],
             source_links=unique_links
         )
         await state.set_state(SourcesGenerationStates.waiting_for_approval)
@@ -2737,16 +2723,25 @@ async def sources_auto_search(callback: CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_back")]
         ])
         
-        # Отправляем результат
-        await callback.message.answer(f"📝 <b>Ваш пост готов на основе свежих новостей:</b>\n\n{post_text}", parse_mode="HTML")
+        # Отправляем пост (с картинкой если есть)
+        if source_images:
+            from aiogram.types import InputMediaPhoto
+            media = [InputMediaPhoto(media=img) for img in source_images[:3]]
+            # Первый элемент группы должен иметь caption и parse_mode
+            media[0].caption = f"📝 <b>Ваш пост готов:</b>\n\n{post_text[:1000]}"
+            media[0].parse_mode = "HTML"
+            await callback.message.answer_media_group(media=media)
+            if len(post_text) > 1000:
+                await callback.message.answer(f"...{post_text[1000:]}", parse_mode="HTML")
+        else:
+            await callback.message.answer(f"📝 <b>Ваш пост готов:</b>\n\n{post_text}", parse_mode="HTML")
 
-        logger.info(f"Отправка ссылок. Всего: {len(unique_links)}")
         if unique_links:
-            links_text = "🔗 <b>Прямые ссылки на первоисточники:</b>\n\n" + "\n".join([f"• {url}" for url in unique_links])
+            links_text = "🔗 <b>Прямые ссылки на первоисточники:</b>\n\n" + "\n".join([f"• {url}" for url in unique_links[:10]])
             await callback.message.answer(links_text, parse_mode="HTML", disable_web_page_preview=True)
 
         await callback.message.answer("Выберите действие:", reply_markup=keyboard)
-        
+    
     except Exception as e:
         logger.error(f"Ошибка в sources_auto_search: {e}", exc_info=True)
         if 'loading_msg' in locals():
@@ -2777,23 +2772,22 @@ async def sources_generate_process(message: Message, state: FSMContext):
         # Извлекаем ссылки
         urls = re.findall(r'https?://[^\s]+', input_text)
         sources_data = []
-        source_links_list = []
+        source_images = []
         
         # Парсим ссылки
         if urls:
             for url in urls:
                 if 't.me/' in url:
-                    # Увеличиваем до 10 постов, чтобы найти самое важное
                     posts = await dependencies.source_parser_service.parse_telegram_source(url, count=10)
                     sources_data.extend(posts)
                 elif 'vk.com/' in url:
                     posts = await dependencies.source_parser_service.parse_vk_source(url, count=5)
                     sources_data.extend(posts)
                 else:
-                    posts = await dependencies.source_parser_service.parse_source(url)
+                    posts = await dependencies.source_parser_service.parse_source("website", url)
                     sources_data.extend(posts)
         
-        # Собираем РЕАЛЬНЫЕ прямые ссылки из полученных данных
+        # Собираем РЕАЛЬНЫЕ прямые ссылки и картинки из полученных данных
         unique_links = []
         seen_links = set()
         for p in sources_data:
@@ -2801,6 +2795,8 @@ async def sources_generate_process(message: Message, state: FSMContext):
             if link and link not in seen_links:
                 unique_links.append(link)
                 seen_links.add(link)
+            if p.get('image') and p['image'] not in source_images:
+                source_images.append(p['image'])
         
         # Генерируем текст
         if sources_data:
@@ -2809,13 +2805,12 @@ async def sources_generate_process(message: Message, state: FSMContext):
             # Если ссылок нет, используем входной текст как тему
             prompt = f"Напиши актуальную новость или статью на тему: {input_text}. Сделай это уникально, экспертно от лица компании Археон."
             post_text = await dependencies.ai_service.generate_post_text(prompt=prompt)
-            # В этом случае ссылок нет, оставляем пустым
             unique_links = []
         
-        # Сохраняем в состояние для одобрения (текст и ссылки отдельно)
+        # Сохраняем в состояние
         await state.update_data(
             generated_post_text=post_text, 
-            generated_photo_paths=[],
+            generated_photo_paths=source_images[:3],
             source_links=unique_links
         )
         await state.set_state(SourcesGenerationStates.waiting_for_approval)
@@ -2828,12 +2823,21 @@ async def sources_generate_process(message: Message, state: FSMContext):
             [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_back")]
         ])
         
-        # 1. Отправляем заголовок и текст
-        await message.answer(f"📝 <b>Ваш пост готов:</b>\n\n{post_text}", parse_mode="HTML")
+        # 1. Отправляем пост (с картинкой если есть)
+        if source_images:
+            from aiogram.types import InputMediaPhoto
+            media = [InputMediaPhoto(media=img) for img in source_images[:3]]
+            media[0].caption = f"📝 <b>Ваш пост готов:</b>\n\n{post_text[:1000]}"
+            media[0].parse_mode = "HTML"
+            await message.answer_media_group(media=media)
+            if len(post_text) > 1000:
+                await message.answer(f"...{post_text[1000:]}", parse_mode="HTML")
+        else:
+            await message.answer(f"📝 <b>Ваш пост готов:</b>\n\n{post_text}", parse_mode="HTML")
 
         # 2. Если были ссылки, отправляем их ОТДЕЛЬНЫМ сообщением
         if unique_links:
-            links_text = "🔗 <b>Использованные источники:</b>\n\n" + "\n".join([f"• {url}" for url in unique_links])
+            links_text = "🔗 <b>Использованные источники:</b>\n\n" + "\n".join([f"• {url}" for url in unique_links[:10]])
             await message.answer(links_text, parse_mode="HTML", disable_web_page_preview=True)
 
         # 3. Отправляем меню действий

@@ -83,6 +83,12 @@ class TelegramService:
             except Exception as e:
                 logger.error(f"Ошибка при отправке уведомления администратору {admin_id}: {e}")
     
+    def _get_photo_input(self, photo_path: str):
+        """Возвращает FSInputFile для локальных файлов или строку для URL"""
+        if photo_path.startswith(('http://', 'https://')):
+            return photo_path
+        return FSInputFile(photo_path)
+
     async def send_for_approval(
         self,
         post_text: str,
@@ -94,7 +100,7 @@ class TelegramService:
         
         Args:
             post_text: Текст поста
-            photos: Список путей к фотографиям
+            photos: Список путей к фотографиям или URL
             day_of_week: День недели для запланированного поста (опционально)
         """
         # Формируем заголовок
@@ -124,63 +130,62 @@ class TelegramService:
                     # Отправляем с фото
                     if len(photos) == 1:
                         # Одно фото
-                        photo_path = Path(photos[0])
-                        if photo_path.exists():
-                            if len(full_text) <= MAX_CAPTION_LENGTH:
-                                sent_message = await self.bot.send_photo(
-                                    chat_id=admin_id,
-                                    photo=FSInputFile(photos[0]),
-                                    caption=full_text,
-                                    reply_markup=keyboard,
-                                    parse_mode="HTML"
-                                )
-                                # Сохраняем фото для черновика
-                                self._draft_photos[sent_message.message_id] = photos.copy()
-                            else:
-                                # Текст слишком длинный, отправляем отдельно
-                                photo_message = await self.bot.send_photo(
-                                    chat_id=admin_id,
-                                    photo=FSInputFile(photos[0]),
-                                    caption=f"{header}📝 Полный текст ниже ⬇️",
-                                    parse_mode="HTML"
-                                )
-                                text_message = await self.bot.send_message(
-                                    chat_id=admin_id,
-                                    text=full_text,
-                                    reply_markup=keyboard,
-                                    parse_mode="HTML"
-                                )
-                                # Сохраняем фото для черновика
-                                self._draft_photos[text_message.message_id] = photos.copy()
+                        photo_input = self._get_photo_input(photos[0])
+                        
+                        if len(full_text) <= MAX_CAPTION_LENGTH:
+                            sent_message = await self.bot.send_photo(
+                                chat_id=admin_id,
+                                photo=photo_input,
+                                caption=full_text,
+                                reply_markup=keyboard,
+                                parse_mode="HTML"
+                            )
+                            # Сохраняем фото для черновика
+                            self._draft_photos[sent_message.message_id] = photos.copy()
+                        else:
+                            # Текст слишком длинный, отправляем отдельно
+                            photo_message = await self.bot.send_photo(
+                                chat_id=admin_id,
+                                photo=photo_input,
+                                caption=f"{header}📝 Полный текст ниже ⬇️",
+                                parse_mode="HTML"
+                            )
+                            text_message = await self.bot.send_message(
+                                chat_id=admin_id,
+                                text=full_text,
+                                reply_markup=keyboard,
+                                parse_mode="HTML"
+                            )
+                            # Сохраняем фото для черновика
+                            self._draft_photos[text_message.message_id] = photos.copy()
                     else:
                         # Несколько фото - отправляем медиагруппу
                         from aiogram.types import InputMediaPhoto
                         media_group = []
-                        for i, photo_path in enumerate(photos):
-                            path = Path(photo_path)
-                            if path.exists():
-                                if i == 0:
-                                    # Первое фото с подписью
-                                    if len(full_text) <= MAX_CAPTION_LENGTH:
-                                        media_group.append(
-                                            InputMediaPhoto(
-                                                media=FSInputFile(photo_path),
-                                                caption=full_text,
-                                                parse_mode="HTML"
-                                            )
+                        for i, p in enumerate(photos):
+                            photo_input = self._get_photo_input(p)
+                            if i == 0:
+                                # Первое фото с подписью
+                                if len(full_text) <= MAX_CAPTION_LENGTH:
+                                    media_group.append(
+                                        InputMediaPhoto(
+                                            media=photo_input,
+                                            caption=full_text,
+                                            parse_mode="HTML"
                                         )
-                                    else:
-                                        media_group.append(
-                                            InputMediaPhoto(
-                                                media=FSInputFile(photo_path),
-                                                caption=f"{header}📝 Полный текст ниже ⬇️",
-                                                parse_mode="HTML"
-                                            )
-                                        )
+                                    )
                                 else:
                                     media_group.append(
-                                        InputMediaPhoto(media=FSInputFile(photo_path))
+                                        InputMediaPhoto(
+                                            media=photo_input,
+                                            caption=f"{header}📝 Полный текст ниже ⬇️",
+                                            parse_mode="HTML"
+                                        )
                                     )
+                            else:
+                                media_group.append(
+                                    InputMediaPhoto(media=photo_input)
+                                )
                         
                         if media_group:
                             sent_messages = await self.bot.send_media_group(
@@ -219,7 +224,7 @@ class TelegramService:
         
         Args:
             post_text: Текст поста
-            photos: Список путей к фотографиям
+            photos: Список путей к фотографиям или URL
             
         Returns:
             Результат публикации или None при ошибке
@@ -235,34 +240,32 @@ class TelegramService:
                 # Отправляем с фото
                 if len(photos) == 1:
                     # Одно фото
-                    photo_path = Path(photos[0])
-                    if photo_path.exists():
-                        await self.bot.send_photo(
-                            chat_id=channel_id,
-                            photo=FSInputFile(photos[0]),
-                            caption=post_text,
-                            parse_mode="HTML"
-                        )
+                    photo_input = self._get_photo_input(photos[0])
+                    await self.bot.send_photo(
+                        chat_id=channel_id,
+                        photo=photo_input,
+                        caption=post_text,
+                        parse_mode="HTML"
+                    )
                 else:
                     # Несколько фото - отправляем медиагруппу
                     from aiogram.types import InputMediaPhoto
                     media_group = []
-                    for i, photo_path in enumerate(photos):
-                        path = Path(photo_path)
-                        if path.exists():
-                            if i == 0:
-                                # Первое фото с подписью
-                                media_group.append(
-                                    InputMediaPhoto(
-                                        media=FSInputFile(photo_path),
-                                        caption=post_text,
-                                        parse_mode="HTML"
-                                    )
+                    for i, p in enumerate(photos):
+                        photo_input = self._get_photo_input(p)
+                        if i == 0:
+                            # Первое фото с подписью
+                            media_group.append(
+                                InputMediaPhoto(
+                                    media=photo_input,
+                                    caption=post_text,
+                                    parse_mode="HTML"
                                 )
-                            else:
-                                media_group.append(
-                                    InputMediaPhoto(media=FSInputFile(photo_path))
-                                )
+                            )
+                        else:
+                            media_group.append(
+                                InputMediaPhoto(media=photo_input)
+                            )
                     
                     if media_group:
                         await self.bot.send_media_group(

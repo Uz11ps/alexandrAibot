@@ -76,6 +76,28 @@ class VKService:
                     logger.warning(f"Не удалось скачать фото из Google Drive: {photo_path}")
             except Exception as e:
                 logger.error(f"Ошибка при скачивании фото из Google Drive: {e}")
+        
+        # Проверяем, является ли это URL
+        elif photo_path.startswith(('http://', 'https://')):
+            try:
+                temp_folder = Path("storage/temp")
+                temp_folder.mkdir(parents=True, exist_ok=True)
+                import hashlib
+                url_hash = hashlib.md5(photo_path.encode()).hexdigest()
+                temp_path = temp_folder / f"web_{url_hash}.jpg"
+                
+                logger.info(f"Загрузка фото по URL: {photo_path}")
+                response = requests.get(photo_path, timeout=15)
+                if response.status_code == 200:
+                    with open(temp_path, 'wb') as f:
+                        f.write(response.content)
+                    logger.info(f"Фото успешно скачано во временный файл: {temp_path}")
+                    return str(temp_path)
+                else:
+                    logger.warning(f"Не удалось скачать фото по URL, статус: {response.status_code}")
+            except Exception as e:
+                logger.error(f"Ошибка при скачивании фото по URL: {e}")
+        
         else:
             # Проверяем локальный путь
             photo_path_obj = Path(photo_path)

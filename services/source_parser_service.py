@@ -35,237 +35,182 @@ class SourceParserService:
     async def parse_vk_source(self, url: str, count: int = 10) -> List[Dict[str, str]]:
         """
         Парсит посты из VK группы
-        
-        Args:
-            url: URL группы VK (например, https://vk.com/group_name или https://vk.com/club123456)
-            count: Количество постов для получения
-            
-        Returns:
-            Список словарей с текстами постов
         """
         try:
-            # Извлекаем screen_name из URL
-            # Примеры: https://vk.com/group_name -> group_name
-            #          https://vk.com/club123456 -> club123456
             match = re.search(r'vk\.com/([^/?]+)', url)
-            if not match:
-                logger.error(f"Неверный формат VK URL: {url}")
-                return []
+            if not match: return []
             
             group_screen_name = match.group(1)
             posts = self.vk_service.get_group_posts(group_screen_name, count)
             
-            # Преобразуем в нужный формат
             result = []
             for post in posts:
-                # Формируем прямую ссылку на пост в VK
-                # Формат: https://vk.com/wall-{owner_id}_{post_id}
                 owner_id = post.get('owner_id')
                 post_id = post.get('id')
                 direct_url = f"https://vk.com/wall{owner_id}_{post_id}" if owner_id and post_id else url
+                
+                # Извлекаем картинку
+                image_url = None
+                attachments = post.get('attachments', [])
+                for att in attachments:
+                    if att.get('type') == 'photo':
+                        sizes = att.get('photo', {}).get('sizes', [])
+                        if sizes: image_url = sizes[-1].get('url')
+                        break
                 
                 result.append({
                     'text': post['text'],
                     'source': direct_url,
                     'source_type': 'vk',
-                    'metadata': {
-                        'post_id': post_id,
-                        'date': post.get('date'),
-                        'likes': post.get('likes', 0),
-                        'reposts': post.get('reposts', 0),
-                        'views': post.get('views', 0)
-                    }
+                    'image': image_url,
+                    'metadata': {'post_id': post_id, 'date': post.get('date')}
                 })
-            
-            logger.info(f"Получено {len(result)} постов из VK источника {url}")
             return result
-            
         except Exception as e:
-            logger.error(f"Ошибка при парсинге VK источника {url}: {e}")
+            logger.error(f"Ошибка при парсинге VK {url}: {e}")
             return []
     
     async def parse_telegram_source(self, url: str, count: int = 10) -> List[Dict[str, str]]:
-        """
-        Парсит посты из Telegram канала
+        """Парсит посты и МЕДИА из Telegram канала"""
+        messages_data = []
         
-        Args:
-            url: URL канала Telegram (например, https://t.me/channel_name)
-            count: Количество постов для получения
-            
-        Returns:
-            Список словарей с текстами постов
-        """
-        if not self.telegram_client:
-            logger.error("Telegram клиент не инициализирован. Укажите TELEGRAM_API_ID и TELEGRAM_API_HASH в .env")
-            return []
-        
+        # 1. Сначала пробуем Web-версию для быстрого получения картинок (как в вашем примере)
         try:
-            # Извлекаем username канала из URL
-            # Пример: https://t.me/channel_name -> channel_name
-            match = re.search(r't\.me/([^/?]+)', url)
-            if not match:
-                logger.error(f"Неверный формат Telegram URL: {url}")
-                return []
+            import httpx
+            from bs4 import BeautifulSoup
+            channel_name = url.split('/')[-1]
+            web_url = f"https://t.me/s/{channel_name}"
             
-            channel_username = match.group(1)
-            
-            # Убеждаемся, что клиент подключен
-            if not self.telegram_client.is_connected():
-                await self.telegram_client.start()
-            
-            # Получаем канал
-            try:
-                entity = await self.telegram_client.get_entity(channel_username)
-            except Exception as e:
-                logger.error(f"Не удалось получить канал {channel_username}: {e}")
-                return []
-            
-            # Получаем сообщения из канала
-            messages = []
-            async for message in self.telegram_client.iter_messages(entity, limit=count):
-                # Пропускаем сообщения без текста
-                if not message.text or not message.text.strip():
-                    continue
+            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+                response = await client.get(web_url)
+                soup = BeautifulSoup(response.text, 'html.parser')
+                web_messages = soup.find_all('div', class_='tgme_widget_message_wrap')
                 
-                # Формируем прямую ссылку на сообщение в Telegram
-                # Формат: https://t.me/channel_username/message_id
-                direct_url = f"{url.rstrip('/')}/{message.id}"
-                
-                messages.append({
-                    'text': message.text,
-                    'source': direct_url,
-                    'source_type': 'telegram',
-                    'metadata': {
-                        'message_id': message.id,
-                        'date': message.date.isoformat() if message.date else None,
-                        'views': message.views if hasattr(message, 'views') else None
-                    }
-                })
-            
-            logger.info(f"Получено {len(messages)} постов из Telegram источника {url}")
-            return messages
-            
+                for msg in web_messages[:count]:
+                    text_el = msg.find('div', class_='tgme_widget_message_text')
+                    if not text_el: continue
+                    
+                    # ПОИСК КАРТИНКИ (ваш метод)
+                    image_url = None
+                    photo = msg.find('div', class_='tgme_widget_message_photo_wrap')
+                    if not photo: photo = msg.find('div', class_='tgme_widget_message_video_player')
+                    if not photo: photo = msg.find('a', class_='tgme_widget_message_inline_image')
+
+                    if photo:
+                        style = photo.get('style', '')
+                        img_match = re.search(r"url\(['\"]?(.*?)['\"]?\)", style)
+                        if img_match: image_url = img_match.group(1)
+
+                    link_el = msg.find('a', class_='tgme_widget_message_date')
+                    direct_url = link_el['href'] if link_el else f"https://t.me/{channel_name}"
+                    
+                    messages_data.append({
+                        'text': text_el.get_text(separator="\n"),
+                        'source': direct_url,
+                        'source_type': 'telegram',
+                        'image': image_url
+                    })
         except Exception as e:
-            logger.error(f"Ошибка при парсинге Telegram источника {url}: {e}")
-            return []
-    
+            logger.error(f"Web scraping error for {url}: {e}")
+
+        # 2. Если есть Telethon, дополняем текст (он надежнее для длинных постов)
+        if self.telegram_client and not messages_data:
+            try:
+                match = re.search(r't\.me/([^/?]+)', url)
+                if match:
+                    channel_username = match.group(1)
+                    if not self.telegram_client.is_connected(): await self.telegram_client.start()
+                    entity = await self.telegram_client.get_entity(channel_username)
+                    async for message in self.telegram_client.iter_messages(entity, limit=count):
+                        if not message.text: continue
+                        direct_url = f"https://t.me/{channel_username}/{message.id}"
+                        messages_data.append({
+                            'text': message.text,
+                            'source': direct_url,
+                            'source_type': 'telegram',
+                            'image': None
+                        })
+            except: pass
+
+        return messages_data
+
+    async def fetch_rss(self, url: str) -> List[Dict]:
+        """RSS парсинг (как в вашем примере)"""
+        import feedparser
+        import httpx
+        from bs4 import BeautifulSoup
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.get(url)
+                feed = feedparser.parse(response.text)
+                news_items = []
+                for entry in feed.entries[:5]:
+                    image_url = None
+                    if 'media_content' in entry and len(entry.media_content) > 0:
+                        image_url = entry.media_content[0].get('url')
+                    if not image_url and 'links' in entry:
+                        for link in entry.links:
+                            if 'image' in link.get('type', ''):
+                                image_url = link.get('href'); break
+                    
+                    news_items.append({
+                        "text": f"{entry.get('title')}\n\n{entry.get('description', entry.get('summary', ''))}",
+                        "source": entry.get("link"),
+                        "source_type": "rss",
+                        "image": image_url
+                    })
+                return news_items
+        except: return []
+
     async def parse_website(self, url: str) -> List[Dict[str, str]]:
-        """
-        Парсит текстовое содержимое веб-сайта и ищет ссылки на статьи, если это главная страница
-        """
+        """Парсинг сайтов с поиском статей"""
         import httpx
         from bs4 import BeautifulSoup
         from urllib.parse import urljoin
-        
         try:
             async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                }
+                headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
                 response = await client.get(url, headers=headers)
-                if response.status_code == 200:
-                    soup = BeautifulSoup(response.text, 'html.parser')
-                    
-                    # Если это главная страница (например, DomClick), ищем ссылки на статьи
-                    articles_data = []
-                    if any(domain in url for domain in ['blog.domclick.ru', 'pikabu.ru', 'ria.ru']):
-                        # Ищем ссылки, которые похожи на статьи (обычно длинные пути или специальные классы)
-                        links = soup.find_all('a', href=True)
-                        seen_urls = set()
-                        
-                        for link in links:
-                            href = link['href']
-                            full_url = urljoin(url, href)
-                            
-                            # Простая фильтрация ссылок на статьи для DomClick и подобных
-                            if full_url not in seen_urls and len(full_url) > len(url) + 5:
-                                if any(x in full_url for x in ['/post/', '/article/', '/news/', '2025']):
-                                    seen_urls.add(full_url)
-                                    # Заходим в статью (только первые 3 для скорости)
-                                    if len(seen_urls) <= 3:
-                                        try:
-                                            art_resp = await client.get(full_url, headers=headers)
-                                            if art_resp.status_code == 200:
-                                                art_soup = BeautifulSoup(art_resp.text, 'html.parser')
-                                                # Удаляем мусор
-                                                for s in art_soup(["script", "style", "nav", "footer"]): s.decompose()
-                                                art_text = art_soup.get_text(separator=' ')
-                                                clean_art_text = ' '.join(art_text.split())[:3000]
-                                                if len(clean_art_text) > 500:
-                                                    articles_data.append({
-                                                        'text': clean_art_text,
-                                                        'source': full_url,
-                                                        'source_type': 'website',
-                                                        'metadata': {'title': art_soup.title.string if art_soup.title else 'Статья'}
-                                                    })
-                                        except: continue
-
-                    if articles_data:
-                        return articles_data
-
-                    # Если не нашли статей или это уже страница статьи
-                    for script in soup(["script", "style"]): script.decompose()
-                    text = soup.get_text(separator=' ')
-                    clean_text = ' '.join(text.split())[:3000]
-                    
-                    return [{
-                        'text': clean_text,
-                        'source': url,
-                        'source_type': 'website',
-                        'metadata': {'title': soup.title.string if soup.title else 'Без заголовка'}
-                    }]
-        except Exception as e:
-            logger.error(f"Ошибка при парсинге сайта {url}: {e}")
-            
-        return []
+                if response.status_code != 200: return []
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                # Поиск статей на главной
+                articles_data = []
+                if any(domain in url for domain in ['blog.domclick.ru', 'ria.ru', 'rbc.ru']):
+                    links = soup.find_all('a', href=True)
+                    seen = set()
+                    for link in links:
+                        full_url = urljoin(url, link['href'])
+                        if full_url not in seen and len(full_url) > len(url) + 5:
+                            if any(x in full_url for x in ['/post/', '/article/', '/news/', '2025']):
+                                seen.add(full_url)
+                                if len(seen) > 3: break
+                                try:
+                                    art_resp = await client.get(full_url, headers=headers)
+                                    art_soup = BeautifulSoup(art_resp.text, 'html.parser')
+                                    # Картинка статьи
+                                    img_url = None
+                                    og_img = art_soup.find("meta", property="og:image")
+                                    if og_img: img_url = og_img.get("content")
+                                    
+                                    for s in art_soup(["script", "style", "nav", "footer"]): s.decompose()
+                                    text = ' '.join(art_soup.get_text().split())[:3000]
+                                    if len(text) > 500:
+                                        articles_data.append({
+                                            'text': text,
+                                            'source': full_url,
+                                            'source_type': 'website',
+                                            'image': img_url
+                                        })
+                                except: continue
+                return articles_data if articles_data else [{'text': ' '.join(soup.get_text().split())[:3000], 'source': url, 'source_type': 'website'}]
+        except: return []
 
     async def parse_source(self, source_type: str, url: str, count: int = 10) -> List[Dict[str, str]]:
-        """
-        Парсит посты из источника по типу
-        """
-        if source_type == "vk":
-            return await self.parse_vk_source(url, count)
-        elif source_type == "telegram":
-            return await self.parse_telegram_source(url, count)
-        elif source_type == "website":
-            return await self.parse_website(url)
-        else:
-            # Пытаемся определить по URL
-            if 't.me/' in url:
-                return await self.parse_telegram_source(url, count)
-            elif 'vk.com/' in url:
-                return await self.parse_vk_source(url, count)
-            else:
-                return await self.parse_website(url)
-    
-    async def parse_all_sources(self, sources: List) -> List[Dict[str, str]]:
-        """
-        Парсит посты из всех переданных источников
-        
-        Args:
-            sources: Список объектов Source
-            
-        Returns:
-            Объединенный список всех постов из всех источников
-        """
-        all_posts = []
-        
-        for source in sources:
-            if not source.enabled:
-                continue
-            
-            try:
-                posts = await self.parse_source(source.type, source.url, count=10)
-                all_posts.extend(posts)
-            except Exception as e:
-                logger.error(f"Ошибка при парсинге источника {source.url}: {e}")
-                continue
-        
-        logger.info(f"Всего получено {len(all_posts)} постов из {len(sources)} источников")
-        return all_posts
-    
+        if source_type == "vk": return await self.parse_vk_source(url, count)
+        if 't.me/' in url: return await self.parse_telegram_source(url, count)
+        return await self.parse_website(url)
+
     async def close(self):
-        """Закрывает соединения"""
         if self.telegram_client and self.telegram_client.is_connected():
             await self.telegram_client.disconnect()
-
