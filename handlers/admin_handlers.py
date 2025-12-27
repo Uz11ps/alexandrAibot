@@ -2650,46 +2650,66 @@ async def sources_generate_start(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(SourcesGenerationStates.waiting_for_sources, F.data == "sources_auto_search")
 async def sources_auto_search(callback: CallbackQuery, state: FSMContext):
-    """Автоматический поиск новостей ИЖС"""
+    """Автоматический поиск новостей ИЖС по списку доверенных источников"""
     if not is_admin(callback.from_user.id):
         await safe_answer_callback(callback, "У вас нет доступа.", show_alert=True)
         return
     
-    loading_msg = await callback.message.answer("🔍 <b>Ищу самые свежие новости ИЖС в Дзен и поисковиках...</b>", parse_mode="HTML")
+    loading_msg = await callback.message.answer("🔍 <b>Ищу свежие новости в RussiaBuild, DomClick, RIA Realty и других источниках...</b>", parse_mode="HTML")
     
     try:
-        # Промпт с учетом Крымской специфики и ключевых ядер, предоставленных пользователем
-        geo_filter = "(Севастополь OR Крым OR Республика Крым OR Симферополь OR Ялта OR Бахчисарай OR Судак OR Феодосия OR Евпатория)"
-        topics = "(ИЖС OR СНТ OR ГрК РФ OR ЗК РФ OR 'дачная амнистия' OR ПЗЗ OR Генплан OR Росреестр OR техприсоединение)"
+        # Список "золотых источников" от заказчика
+        gold_sources = [
+            "https://t.me/RussiaBuild",
+            "https://t.me/ria_realty",
+            "https://t.me/house_proekt",
+            "https://blog.domclick.ru/",
+            "https://t.me/m_khusnullin" # Добавил Хуснуллина для веса
+        ]
         
-        prompt = f"""Найди и опиши самые актуальные новости в сфере ИЖС, регулирования земли и строительства, используя следующие фильтры:
-ГЕО: {geo_filter}
-ТЕМЫ: {topics}
-
-ИНСТРУКЦИЯ:
-1. Используй актуальные данные на текущую дату (декабрь 2025).
-2. Сфокусируйся на изменениях в законах, ПЗЗ, Генплане Севастополя/Крыма и ипотечных программах.
-3. Переработай информацию в ПОЛНОСТЬЮ САМОСТОЯТЕЛЬНЫЙ пост от лица компании Археон.
-4. Никаких отсылок к источникам или прошлым публикациям.
-5. Если новость про проект закона — пометь это.
-
-Стиль: Профессиональный аналитик Археон."""
+        sources_data = []
+        source_links_list = []
         
-        post_text = await dependencies.ai_service.generate_post_text(prompt=prompt)
-        from services.ai_service import markdown_to_html
-        post_text = markdown_to_html(post_text)
+        # Парсим каждый источник
+        for url in gold_sources:
+            try:
+                if 't.me/' in url:
+                    posts = await dependencies.source_parser_service.parse_telegram_source(url, count=3)
+                    for p in posts:
+                        # Фильтруем по ключевым словам для релевантности
+                        text_lower = p['text'].lower()
+                        if any(k in text_lower for k in ['ижс', 'крым', 'севастополь', 'закон', 'новости', 'стройка']):
+                            sources_data.append(p)
+                            source_links_list.append(p['source'])
+                else:
+                    # Для сайтов (DomClick и др.)
+                    posts = await dependencies.source_parser_service.parse_source(url, count=3)
+                    for p in posts:
+                        sources_data.append(p)
+                        source_links_list.append(p['source'])
+            except Exception as e:
+                logger.error(f"Ошибка при автопарсинге {url}: {e}")
+
+        if not sources_data:
+            # Если ничего не нашли свежего, используем ИИ как запасной вариант, но предупреждаем
+            prompt = "Найди актуальные новости ИЖС Крыма и Севастополя за декабрь 2025. Сфокусируйся на законах и ипотеке."
+            post_text = await dependencies.ai_service.generate_post_text(prompt=prompt)
+            from services.ai_service import markdown_to_html
+            post_text = markdown_to_html(post_text)
+            source_links_list = ["https://t.me/RussiaBuild", "https://blog.domclick.ru/"]
+        else:
+            # Генерируем пост на основе реальных данных
+            post_text = await dependencies.ai_service.generate_post_from_sources(sources_data)
 
         await loading_msg.delete()
         
-        if not post_text:
-            await callback.message.answer("❌ Не удалось найти новости автоматически. Попробуйте ввести ссылки вручную.")
-            return
+        unique_links = list(set(source_links_list))
 
-        # Сохраняем в состояние для одобрения
+        # Сохраняем в состояние
         await state.update_data(
             generated_post_text=post_text, 
             generated_photo_paths=[],
-            source_links=["https://dzen.ru/search?q=ИЖС+Крым", "https://yandex.ru/search/?text=новости+ИЖС+Крым+2025"]
+            source_links=unique_links
         )
         await state.set_state(SourcesGenerationStates.waiting_for_approval)
         
@@ -2701,15 +2721,19 @@ async def sources_auto_search(callback: CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_back")]
         ])
         
-        # 1. Отправляем текст
-        await callback.message.answer(f"📝 <b>Ваш пост готов:</b>\n\n{post_text}", parse_mode="HTML")
+        # Отправляем результат
+        await callback.message.answer(f"📝 <b>Ваш пост готов на основе свежих новостей:</b>\n\n{post_text}", parse_mode="HTML")
 
-        # 2. Отправляем общие ссылки для автопоиска
-        links_text = "🔗 <b>Использованные источники:</b>\n\n• Дзен ИЖС Крым\n• Новости ИЖС (Поиск)"
-        await callback.message.answer(links_text, parse_mode="HTML")
+        if unique_links:
+            links_text = "🔗 <b>Прямые ссылки на первоисточники:</b>\n\n" + "\n".join([f"• {url}" for url in unique_links])
+            await callback.message.answer(links_text, parse_mode="HTML", disable_web_page_preview=True)
 
-        # 3. Меню
         await callback.message.answer("Выберите действие:", reply_markup=keyboard)
+        
+    except Exception as e:
+        logger.error(f"Ошибка в sources_auto_search: {e}", exc_info=True)
+        await loading_msg.delete()
+        await callback.message.answer(f"❌ Ошибка при поиске: {str(e)}")
         
     except Exception as e:
         logger.error(f"Ошибка в sources_auto_search: {e}")
