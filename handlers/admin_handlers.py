@@ -2688,8 +2688,8 @@ async def sources_auto_search(callback: CallbackQuery, state: FSMContext):
                             sources_data.append(p)
                             source_added_count += 1
                 else:
-                    # Для сайтов (уже умеет искать статьи внутри)
-                    posts = await dependencies.source_parser_service.parse_source(url, count=5)
+                    # Исправлен вызов parse_source
+                    posts = await dependencies.source_parser_service.parse_source("website", url)
                     sources_data.extend(posts)
             except Exception as e:
                 logger.error(f"Ошибка при автопарсинге {url}: {e}")

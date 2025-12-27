@@ -145,7 +145,7 @@ class AIService:
             params = {
                 "model": self.model,
                 "messages": [{"role": "user", "content": user_msg}],
-                "max_completion_tokens": 10000
+                "max_completion_tokens": 8000
             }
             if self.supports_temperature: params["temperature"] = 0.7
             
@@ -153,8 +153,20 @@ class AIService:
             result = response.choices[0].message.content.strip()
             return markdown_to_html(clean_ai_response(result))
         except Exception as e:
-            logger.error(f"Ошибка генерации текста: {e}")
-            return "📊 <b>Новости Археон</b>\n\nВедем работы на объектах в штатном режиме. Подробности скоро!"
+            logger.error(f"Ошибка генерации {self.model}: {e}. Пробую резервную модель gpt-4o...")
+            try:
+                # Резервная попытка на gpt-4o
+                response = await self.client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[{"role": "user", "content": user_msg}],
+                    max_tokens=4000,
+                    temperature=0.7
+                )
+                result = response.choices[0].message.content.strip()
+                return markdown_to_html(clean_ai_response(result))
+            except Exception as e2:
+                logger.error(f"Критическая ошибка даже на gpt-4o: {e2}")
+                return "📊 <b>Новости Археон</b>\n\nСледим за рынком ИЖС. Самые важные обновления подготовим в ближайшее время!"
 
     async def analyze_photo(self, photo_path: str) -> str:
         import base64
