@@ -2664,11 +2664,10 @@ async def sources_auto_search(callback: CallbackQuery, state: FSMContext):
             "https://t.me/ria_realty",
             "https://t.me/house_proekt",
             "https://blog.domclick.ru/",
-            "https://t.me/m_khusnullin" # Добавил Хуснуллина для веса
+            "https://t.me/m_khusnullin"
         ]
         
         sources_data = []
-        source_links_list = []
         
         # Парсим каждый источник
         for url in gold_sources:
@@ -2676,38 +2675,43 @@ async def sources_auto_search(callback: CallbackQuery, state: FSMContext):
                 if 't.me/' in url:
                     # Увеличиваем до 20 постов для максимального охвата
                     posts = await dependencies.source_parser_service.parse_telegram_source(url, count=20)
+                    source_added_count = 0
                     for p in posts:
                         text_lower = p['text'].lower()
                         # Ключевые слова для приоритета
                         keywords = ['ижс', 'крым', 'севастополь', 'закон', 'новости', 'стройка', 'дом', 'участок', 'земля', 'ипотека', 'ставка', 'налог']
                         if any(k in text_lower for k in keywords):
                             sources_data.append(p)
-                            source_links_list.append(p['source'])
-                        # Если по фильтрам пусто, берем 5 последних постов "как есть"
-                        elif len(sources_data) < 5:
+                            source_added_count += 1
+                        # Если по фильтрам пусто, берем 3 последних поста этого канала "как есть"
+                        elif source_added_count < 3:
                             sources_data.append(p)
-                            source_links_list.append(p['source'])
+                            source_added_count += 1
                 else:
                     # Для сайтов (уже умеет искать статьи внутри)
                     posts = await dependencies.source_parser_service.parse_source(url, count=5)
-                    for p in posts:
-                        sources_data.append(p)
-                        source_links_list.append(p['source'])
+                    sources_data.extend(posts)
             except Exception as e:
                 logger.error(f"Ошибка при автопарсинге {url}: {e}")
 
         # Гарантируем уникальность и только прямые ссылки
         unique_links = []
-        for l in source_links_list:
-            # Пропускаем общие ссылки на каналы/блоги, оставляем только на посты/статьи
-            if l in gold_sources: continue
-            if l not in unique_links: unique_links.append(l)
+        seen_links = set()
+        for p in sources_data:
+            link = p.get('source')
+            if link and link not in seen_links:
+                # Проверяем, что это прямая ссылка (содержит ID поста или путь к статье)
+                is_direct = any(x in link for x in ['/', 'wall', 'post', 'article'])
+                is_not_main = link.rstrip('/') not in [s.rstrip('/') for s in gold_sources]
+                if is_direct and is_not_main:
+                    unique_links.append(link)
+                    seen_links.add(link)
 
         if not sources_data:
-            # Если даже так пусто (технический сбой), используем ИИ без ссылок вообще
+            # Если даже так пусто, используем ИИ
             prompt = "Напиши актуальный экспертный дайджест новостей ИЖС в Крыму и Севастополе за декабрь 2025."
             post_text = await dependencies.ai_service.generate_post_text(prompt=prompt)
-            unique_links = [] # Очищаем, чтобы не давать общие ссылки
+            unique_links = [] 
         else:
             # Генерируем пост на основе реальных данных
             post_text = await dependencies.ai_service.generate_post_from_sources(sources_data)
