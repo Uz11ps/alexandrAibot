@@ -151,10 +151,11 @@ class SourceParserService:
     
     async def parse_website(self, url: str) -> List[Dict[str, str]]:
         """
-        Парсит текстовое содержимое веб-сайта (например, Pikabu, Domclick)
+        Парсит текстовое содержимое веб-сайта и ищет ссылки на статьи, если это главная страница
         """
         import httpx
         from bs4 import BeautifulSoup
+        from urllib.parse import urljoin
         
         try:
             async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
@@ -165,21 +166,48 @@ class SourceParserService:
                 if response.status_code == 200:
                     soup = BeautifulSoup(response.text, 'html.parser')
                     
-                    # Удаляем скрипты и стили
-                    for script in soup(["script", "style"]):
-                        script.decompose()
+                    # Если это главная страница (например, DomClick), ищем ссылки на статьи
+                    articles_data = []
+                    if any(domain in url for domain in ['blog.domclick.ru', 'pikabu.ru', 'ria.ru']):
+                        # Ищем ссылки, которые похожи на статьи (обычно длинные пути или специальные классы)
+                        links = soup.find_all('a', href=True)
+                        seen_urls = set()
                         
-                    # Извлекаем текст
+                        for link in links:
+                            href = link['href']
+                            full_url = urljoin(url, href)
+                            
+                            # Простая фильтрация ссылок на статьи для DomClick и подобных
+                            if full_url not in seen_urls and len(full_url) > len(url) + 5:
+                                if any(x in full_url for x in ['/post/', '/article/', '/news/', '2025']):
+                                    seen_urls.add(full_url)
+                                    # Заходим в статью (только первые 3 для скорости)
+                                    if len(seen_urls) <= 3:
+                                        try:
+                                            art_resp = await client.get(full_url, headers=headers)
+                                            if art_resp.status_code == 200:
+                                                art_soup = BeautifulSoup(art_resp.text, 'html.parser')
+                                                # Удаляем мусор
+                                                for s in art_soup(["script", "style", "nav", "footer"]): s.decompose()
+                                                art_text = art_soup.get_text(separator=' ')
+                                                clean_art_text = ' '.join(art_text.split())[:3000]
+                                                if len(clean_art_text) > 500:
+                                                    articles_data.append({
+                                                        'text': clean_art_text,
+                                                        'source': full_url,
+                                                        'source_type': 'website',
+                                                        'metadata': {'title': art_soup.title.string if art_soup.title else 'Статья'}
+                                                    })
+                                        except: continue
+
+                    if articles_data:
+                        return articles_data
+
+                    # Если не нашли статей или это уже страница статьи
+                    for script in soup(["script", "style"]): script.decompose()
                     text = soup.get_text(separator=' ')
-                    # Очищаем лишние пробелы
-                    lines = (line.strip() for line in text.splitlines())
-                    chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-                    text = '\n'.join(chunk for chunk in chunks if chunk)
+                    clean_text = ' '.join(text.split())[:3000]
                     
-                    # Берем первые 3000 символов (самое важное)
-                    clean_text = text[:3000]
-                    
-                    logger.info(f"Получен текст с сайта {url} ({len(clean_text)} симв.)")
                     return [{
                         'text': clean_text,
                         'source': url,
