@@ -2686,7 +2686,11 @@ async def sources_auto_search(callback: CallbackQuery, state: FSMContext):
             return
 
         # Сохраняем в состояние для одобрения
-        await state.update_data(generated_post_text=post_text, generated_photo_paths=[])
+        await state.update_data(
+            generated_post_text=post_text, 
+            generated_photo_paths=[],
+            source_links=["https://dzen.ru/search?q=ИЖС+Крым", "https://yandex.ru/search/?text=новости+ИЖС+Крым+2025"]
+        )
         await state.set_state(SourcesGenerationStates.waiting_for_approval)
         
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -2697,11 +2701,15 @@ async def sources_auto_search(callback: CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_back")]
         ])
         
-        await callback.message.answer(
-            f"📝 <b>Новости ИЖС (уникализировано):</b>\n\n{post_text}",
-            reply_markup=keyboard,
-            parse_mode="HTML"
-        )
+        # 1. Отправляем текст
+        await callback.message.answer(f"📝 <b>Ваш пост готов:</b>\n\n{post_text}", parse_mode="HTML")
+
+        # 2. Отправляем общие ссылки для автопоиска
+        links_text = "🔗 <b>Использованные источники:</b>\n\n• Дзен ИЖС Крым\n• Новости ИЖС (Поиск)"
+        await callback.message.answer(links_text, parse_mode="HTML")
+
+        # 3. Меню
+        await callback.message.answer("Выберите действие:", reply_markup=keyboard)
         
     except Exception as e:
         logger.error(f"Ошибка в sources_auto_search: {e}")
@@ -2774,13 +2782,15 @@ async def sources_generate_process(message: Message, state: FSMContext):
             await message.answer("❌ Не удалось сгенерировать пост. Попробуйте другие источники.")
             return
 
-        # Подготавливаем блок источников для отправки отдельным сообщением
-        sources_block = ""
-        if source_links_list:
-            sources_block = "\n\n📌 <b>Источники:</b>\n" + "\n".join([f"• {url}" for url in set(source_links_list)])
-
-        # Сохраняем в состояние для одобрения
-        await state.update_data(generated_post_text=post_text, generated_photo_paths=[])
+        # Подготавливаем список ссылок (уникальных)
+        unique_links = list(set(source_links_list))
+        
+        # Сохраняем в состояние для одобрения (текст и ссылки отдельно)
+        await state.update_data(
+            generated_post_text=post_text, 
+            generated_photo_paths=[],
+            source_links=unique_links
+        )
         await state.set_state(SourcesGenerationStates.waiting_for_approval)
         
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -2791,17 +2801,15 @@ async def sources_generate_process(message: Message, state: FSMContext):
             [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_back")]
         ])
         
-        # Отправляем основной пост
-        await message.answer(
-            f"📝 <b>Сгенерированный пост:</b>\n\n{post_text}",
-            parse_mode="HTML"
-        )
+        # 1. Отправляем заголовок и текст
+        await message.answer(f"📝 <b>Ваш пост готов:</b>\n\n{post_text}", parse_mode="HTML")
 
-        # Отправляем источники отдельным сообщением, если они есть
-        if sources_block:
-            await message.answer(sources_block, parse_mode="HTML", disable_web_page_preview=True)
+        # 2. Если были ссылки, отправляем их ОТДЕЛЬНЫМ сообщением
+        if unique_links:
+            links_text = "🔗 <b>Использованные источники:</b>\n\n" + "\n".join([f"• {url}" for url in unique_links])
+            await message.answer(links_text, parse_mode="HTML", disable_web_page_preview=True)
 
-        # Отправляем клавиатуру управления
+        # 3. Отправляем меню действий
         await message.answer("Выберите действие:", reply_markup=keyboard)
         
     except Exception as e:
@@ -2908,10 +2916,16 @@ async def handle_new_features_approve(callback: CallbackQuery, state: FSMContext
     data = await state.get_data()
     post_text = data.get('generated_post_text')
     photos = data.get('generated_photo_paths', [])
+    source_links = data.get('source_links', [])
     
     if not post_text:
         await callback.answer("Ошибка: текст поста не найден", show_alert=True)
         return
+    
+    # Если есть источники, прикрепляем их к итоговому посту
+    if source_links and "Источники" not in post_text:
+        links_block = "\n\n📌 <b>Источники:</b>\n" + "\n".join([f"• {url}" for url in source_links])
+        post_text += links_block
     
     await callback.message.edit_reply_markup(reply_markup=None)
     status_msg = await callback.message.answer("🚀 Публикую пост...")

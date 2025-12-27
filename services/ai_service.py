@@ -15,17 +15,22 @@ def clean_ai_response(text: str) -> str:
     """
     Очищает ответ AI от комментариев и лишнего текста
     """
-    # Удаляем комментарии AI в конце текста (начинающиеся с "---" или содержащие "Этот текст соответствует")
+    if not text:
+        return ""
+        
+    # Удаляем заголовки-черновики, если они просочились
+    text = re.sub(r'📝 Черновик поста для согласования:?\s*', '', text, flags=re.IGNORECASE)
+    
+    # Удаляем технические примечания AI
     lines = text.split('\n')
     cleaned_lines = []
     skip_rest = False
     
     for line in lines:
-        # Пропускаем строки с комментариями AI
         if line.strip().startswith('---'):
             skip_rest = True
             break
-        if 'Этот текст соответствует требованиям' in line or 'соответствует требованиям к длине' in line:
+        if 'Этот текст соответствует' in line or 'соответствует требованиям' in line:
             skip_rest = True
             break
         if skip_rest:
@@ -34,7 +39,7 @@ def clean_ai_response(text: str) -> str:
     
     cleaned_text = '\n'.join(cleaned_lines).strip()
     
-    # Удаляем оставшиеся комментарии в конце
+    # Удаляем остаточный мусор в конце
     patterns_to_remove = [
         r'---.*$',
         r'Этот текст соответствует.*$',
@@ -53,15 +58,14 @@ def markdown_to_html(text: str) -> str:
     """
     Конвертирует markdown форматирование в HTML для Telegram
     """
+    if not text:
+        return ""
     # Заменяем **текст** на <b>текст</b>
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
-    
-    # Заменяем *текст* на <i>текст</i> (курсив, но только если не двойные звездочки)
+    # Заменяем *текст* на <i>текст</i>
     text = re.sub(r'(?<!\*)\*([^*\n]+?)\*(?!\*)', r'<i>\1</i>', text)
-    
     # Заменяем `текст` на <code>текст</code>
     text = re.sub(r'`([^`]+?)`', r'<code>\1</code>', text)
-    
     return text
 
 
@@ -69,343 +73,199 @@ class AIService:
     """Сервис для взаимодействия с OpenAI API"""
     
     def __init__(self, prompt_config_service=None):
-        """
-        Инициализация AI сервиса
-        """
         self.prompt_config_service = prompt_config_service
-        # Настройка прокси если указан
-        http_client = None
         self.proxy_list = []
         self.current_proxy_index = 0
+        self.current_api_key_index = 0
         
-        # Определяем, поддерживает ли модель параметр temperature
-        self.supports_temperature = not (settings.OPENAI_MODEL.startswith("gpt-5") or 
-                                         settings.OPENAI_MODEL.startswith("o1") or
-                                         "o1" in settings.OPENAI_MODEL.lower())
-        
-        # Подготовка списка API ключей для ротации
+        # Список ключей
         self.api_keys = [settings.OPENAI_API_KEY]
         if settings.OPENAI_API_KEYS:
             additional_keys = [k.strip() for k in settings.OPENAI_API_KEYS.split(',')]
             self.api_keys.extend(additional_keys)
-        self.current_api_key_index = 0
-        
-        logger.info(f"Доступно API ключей: {len(self.api_keys)}")
-        
+            
+        # Настройка прокси
+        http_client = None
         if settings.OPENAI_PROXY_ENABLED and settings.OPENAI_PROXY_URL:
             proxy_urls = [p.strip() for p in settings.OPENAI_PROXY_URL.split(',')]
             normalized_proxies = []
             for proxy in proxy_urls:
                 if proxy.count(':') == 3 and not proxy.startswith('http'):
                     parts = proxy.split(':')
-                    if len(parts) == 4:
-                        domain, port, username, password = parts
-                        proxy = f"http://{username}:{password}@{domain}:{port}"
-                normalized_proxies.append(proxy)
+                    normalized_proxies.append(f"http://{parts[2]}:{parts[3]}@{parts[0]}:{parts[1]}")
+                else:
+                    normalized_proxies.append(proxy)
             self.proxy_list = normalized_proxies
             
-            proxy_url = normalized_proxies[0]
             http_client = httpx.AsyncClient(
-                proxy=proxy_url,
+                proxy=self.proxy_list[0],
                 timeout=httpx.Timeout(300.0, connect=60.0, read=300.0)
             )
-        
-        self.client = AsyncOpenAI(
-            api_key=self.api_keys[0],
-            http_client=http_client
-        )
+            
+        self.client = AsyncOpenAI(api_key=self.api_keys[0], http_client=http_client)
         self.model = settings.OPENAI_MODEL
         self.proxy_enabled = settings.OPENAI_PROXY_ENABLED
-        self.proxy_url = settings.OPENAI_PROXY_URL
-    
+        
+        # Поддержка temperature
+        self.supports_temperature = not (self.model.startswith("gpt-5") or "o1" in self.model.lower())
+
     def _switch_proxy(self):
-        """Переключается на следующий прокси из списка"""
         if len(self.proxy_list) > 1:
             self.current_proxy_index = (self.current_proxy_index + 1) % len(self.proxy_list)
-            new_proxy = self.proxy_list[self.current_proxy_index]
+            logger.info(f"Переключение на прокси #{self.current_proxy_index + 1}")
             http_client = httpx.AsyncClient(
-                proxy=new_proxy,
+                proxy=self.proxy_list[self.current_proxy_index],
                 timeout=httpx.Timeout(300.0, connect=60.0, read=300.0)
             )
-            self.client = AsyncOpenAI(
-                api_key=self.api_keys[self.current_api_key_index],
-                http_client=http_client
-            )
+            self.client = AsyncOpenAI(api_key=self.api_keys[self.current_api_key_index], http_client=http_client)
             return True
         return False
-    
+
     def _switch_api_key(self):
-        """Переключается на следующий API ключ из списка"""
         if len(self.api_keys) > 1:
             self.current_api_key_index = (self.current_api_key_index + 1) % len(self.api_keys)
-            new_key = self.api_keys[self.current_api_key_index]
-            
-            http_client = None
-            if self.proxy_enabled and self.proxy_list:
-                current_proxy = self.proxy_list[self.current_proxy_index]
-                http_client = httpx.AsyncClient(
-                    proxy=current_proxy,
-                    timeout=httpx.Timeout(300.0, connect=60.0, read=300.0)
-                )
-            
-            self.client = AsyncOpenAI(
-                api_key=new_key,
-                http_client=http_client
-            )
+            logger.info(f"Переключение на API ключ #{self.current_api_key_index + 1}")
+            self.client = AsyncOpenAI(api_key=self.api_keys[self.current_api_key_index])
             return True
         return False
-    
-    async def make_news_standalone(self, text: str) -> str:
-        """
-        Перерабатывает новость в полностью самостоятельный пост
-        """
-        if self.prompt_config_service:
-            system_prompt = self.prompt_config_service.get_prompt("standalone_news", "system_prompt")
-        else:
-            system_prompt = "Сделай текст новости самостоятельным, удалив отсылки к прошлым постам."
-            
-        try:
-            request_params = {
-                "model": self.model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Переработай этот текст:\n\n{text}"}
-                ],
-                "max_completion_tokens": 2000
-            }
-            if self.supports_temperature:
-                request_params["temperature"] = 0.5
-            response = await self.client.chat.completions.create(**request_params)
-            result = response.choices[0].message.content.strip()
-            return markdown_to_html(clean_ai_response(result))
-        except Exception as e:
-            logger.error(f"Ошибка в make_news_standalone: {e}")
-            return text
 
-    async def generate_post_text(
-        self,
-        prompt: str,
-        context: Optional[str] = None,
-        photos_description: Optional[str] = None
-    ) -> str:
-        """
-        Генерирует текст поста на основе промпта и контекста
-        """
+    async def generate_post_text(self, prompt: str, context: Optional[str] = None, photos_description: Optional[str] = None) -> str:
         if self.prompt_config_service:
-            system_prompt = self.prompt_config_service.get_prompt("generate_post", "system_prompt")
-            if not system_prompt:
-                system_prompt = self._get_default_system_prompt()
+            system_prompt = self.prompt_config_service.get_prompt("generate_post", "system_prompt") or self._get_default_system_prompt()
         else:
             system_prompt = self._get_default_system_prompt()
-        
-        if photos_description:
-            system_prompt += "\n\n**КРИТИЧЕСКИ ВАЖНО:** Используй только описание фотографий ниже. Не придумывай ничего своего."
-        
-        user_prompt = prompt
-        if context:
-            user_prompt += f"\n\nКонтекст:\n{context}"
-        if photos_description:
-            user_prompt += f"\n\nОписание фотографий:\n{photos_description}"
+            
+        user_msg = f"ИНСТРУКЦИЯ:\n{system_prompt}\n\nЗАДАНИЕ:\n{prompt}"
+        if context: user_msg += f"\n\nКОНТЕКСТ:\n{context}"
+        if photos_description: user_msg += f"\n\nОПИСАНИЕ МЕДИА:\n{photos_description}"
         
         try:
-            timeout_seconds = 180.0 if self.proxy_enabled else 60.0
-            
-            if self.model.startswith("gpt-5") or "o1" in self.model.lower():
-                messages = [{"role": "user", "content": f"ИНСТРУКЦИЯ:\n{system_prompt}\n\nЗАДАНИЕ:\n{user_prompt}"}]
-            else:
-                messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
-            
-            request_params = {
+            params = {
                 "model": self.model,
-                "messages": messages,
+                "messages": [{"role": "user", "content": user_msg}],
                 "max_completion_tokens": 10000
             }
-            if self.supports_temperature:
-                request_params["temperature"] = 0.7
+            if self.supports_temperature: params["temperature"] = 0.7
             
-            response = await asyncio.wait_for(
-                self.client.chat.completions.create(**request_params),
-                timeout=timeout_seconds
-            )
-            
-            if not response.choices or not response.choices[0].message.content:
-                raise Exception("Пустой ответ от AI")
-            
+            response = await asyncio.wait_for(self.client.chat.completions.create(**params), timeout=180.0)
             result = response.choices[0].message.content.strip()
             return markdown_to_html(clean_ai_response(result))
-            
         except Exception as e:
-            logger.error(f"Ошибка при генерации текста: {e}")
-            return "📊 <b>Отчет компании «Археон»</b>\n\nВ данный момент мы работаем над вашим объектом. Подробности будут позже."
+            logger.error(f"Ошибка генерации текста: {e}")
+            return "📊 <b>Новости Археон</b>\n\nВедем работы на объектах в штатном режиме. Подробности скоро!"
 
     async def analyze_photo(self, photo_path: str) -> str:
-        """
-        Анализирует фотографию
-        """
         import base64
-        from pathlib import Path
         from PIL import Image
         import io
-        
         try:
             with Image.open(photo_path) as img:
-                if img.mode != 'RGB':
-                    img = img.convert('RGB')
-                max_size = 1024
-                if max(img.size) > max_size:
-                    img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
-                buffer = io.BytesIO()
-                img.save(buffer, format='JPEG', quality=85, optimize=True)
-                image_data = buffer.getvalue()
-        except Exception as e:
-            with open(photo_path, "rb") as photo_file:
-                image_data = photo_file.read()
+                if img.mode != 'RGB': img = img.convert('RGB')
+                img.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+                buf = io.BytesIO()
+                img.save(buf, format='JPEG', quality=85)
+                image_data = buf.getvalue()
+        except Exception:
+            with open(photo_path, "rb") as f: image_data = f.read()
+            
+        b64 = base64.b64encode(image_data).decode('utf-8')
+        prompt = self._get_photo_analysis_prompt()
         
-        base64_image = base64.b64encode(image_data).decode('utf-8')
-        
-        analysis_prompt = self._get_photo_analysis_prompt()
-        vision_model = "gpt-5.2"
-        
-        if vision_model.startswith("gpt-5") or "o1" in vision_model.lower():
-            messages = [{
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": f"ИНСТРУКЦИЯ: Проанализируй это фото как технадзор Археон.\n\nЗАДАНИЕ: {analysis_prompt}"},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
-                ]
-            }]
-        else:
-            messages = [{
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": analysis_prompt},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
-                ]
-            }]
-
         try:
             response = await asyncio.wait_for(
                 self.client.chat.completions.create(
-                    model=vision_model,
-                    messages=messages,
-                    max_completion_tokens=5000
+                    model="gpt-5.2",
+                    messages=[{
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": f"ИНСТРУКЦИЯ: Проанализируй фото как технадзор Археон.\nЗАДАНИЕ: {prompt}"},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
+                        ]
+                    }],
+                    max_completion_tokens=4000
                 ),
-                timeout=180.0 if self.proxy_enabled else 60.0
-            )
-            return response.choices[0].message.content.strip() or "Фото со стройплощадки."
-        except Exception:
-            return "Фото со стройплощадки Археон."
-
-    async def analyze_multiple_photos(self, photo_paths: List[str]) -> str:
-        if not photo_paths: return ""
-        descriptions = []
-        for i, path in enumerate(photo_paths, 1):
-            desc = await self.analyze_photo(path)
-            descriptions.append(f"Фото {i}: {desc}")
-        return "\n\n".join(descriptions)
-
-    async def analyze_video(self, video_path: str, frames_count: int = 8) -> str:
-        try:
-            import cv2
-            import tempfile
-            from pathlib import Path
-            cap = cv2.VideoCapture(video_path)
-            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            step = total_frames // (frames_count + 1)
-            frame_indices = [step * (i + 1) for i in range(frames_count)]
-            
-            descriptions = []
-            temp_dir = Path(tempfile.gettempdir()) / "video_frames"
-            temp_dir.mkdir(exist_ok=True)
-            
-            for i, idx in enumerate(frame_indices):
-                cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-                ret, frame = cap.read()
-                if not ret: continue
-                f_path = temp_dir / f"f_{i}.jpg"
-                cv2.imwrite(str(f_path), frame)
-                desc = await self.analyze_photo(str(f_path))
-                descriptions.append(f"Сцена {i+1}: {desc}")
-                f_path.unlink(missing_ok=True)
-            cap.release()
-            return "\n\n".join(descriptions) or "Видео процесса строительства."
-        except Exception:
-            return "Видео процесса строительства Археон."
-
-    def _get_default_system_prompt(self) -> str:
-        return """Ты профессиональный копирайтер компании "Археон". Пиши развернуто, экспертно и интересно. Длина 1500-2000 символов."""
-
-    def _get_photo_analysis_prompt(self) -> str:
-        if self.prompt_config_service:
-            return self.prompt_config_service.get_prompt("analyze_photo", "user_prompt") or "Опиши детали строительства на фото."
-        return "Опиши детали строительства на фото."
-
-    async def generate_post_from_sources(self, source_posts: List[Dict[str, str]]) -> str:
-        """
-        Генерирует пост на основе анализа постов из других источников
-        """
-        if not source_posts:
-            return "🏗️ Новости Археон: следите за обновлениями."
-        
-        posts_text = []
-        source_links = set()
-        for i, post in enumerate(source_posts[:10], 1):
-            text = post.get('text', '')
-            link = post.get('source', '')
-            if text: posts_text.append(f"Источник {i}:\n{text}")
-            if link: source_links.add(link)
-        
-        sources_context = "\n---\n".join(posts_text)
-        links_str = "\n".join([f"• {link}" for link in source_links])
-        
-        if self.prompt_config_service:
-            system_prompt = self.prompt_config_service.get_prompt("generate_from_sources", "system_prompt")
-        else:
-            system_prompt = "Ты аналитик Археон. Пиши развернуто (1500-2000 симв)."
-
-        user_prompt = f"""Напиши развернутый пост (1500-2000 символов) на основе этих данных:\n{sources_context}
-\nКРИТИЧЕСКИ ВАЖНО: В конце добавь заголовок "📌 Источники:" и список ссылок:\n{links_str}"""
-        
-        try:
-            messages = [{"role": "user", "content": f"ИНСТРУКЦИЯ:\n{system_prompt}\n\nЗАДАНИЕ:\n{user_prompt}"}]
-            response = await asyncio.wait_for(
-                self.client.chat.completions.create(model=self.model, messages=messages, max_completion_tokens=4000),
                 timeout=180.0
             )
-            result = response.choices[0].message.content.strip()
-            clean_text = clean_ai_response(result)
-            
-            # ПРИНУДИТЕЛЬНО ПРИКЛЕИВАЕМ ИСТОЧНИКИ, ЕСЛИ ИХ НЕТ
-            if source_links and "Источники" not in clean_text:
-                clean_text += f"\n\n📌 <b>Источники:</b>\n{links_str}"
-            
-            return markdown_to_html(clean_text)
+            return response.choices[0].message.content.strip() or "Строительный объект Археон."
         except Exception:
-            return f"🏗️ <b>Новости Археон</b>\n\n{sources_context[:500]}...\n\n📌 <b>Источники:</b>\n{links_str}"
+            return "Объект компании Археон."
+
+    async def analyze_multiple_photos(self, photo_paths: List[str]) -> str:
+        descs = []
+        for i, p in enumerate(photo_paths[:5], 1):
+            d = await self.analyze_photo(p)
+            descs.append(f"Фото {i}: {d}")
+        return "\n\n".join(descs)
+
+    async def generate_post_from_sources(self, source_posts: List[Dict[str, str]]) -> str:
+        if not source_posts: return self._get_fallback_source_post()
+        
+        texts, links = [], set()
+        for i, p in enumerate(source_posts[:10], 1):
+            if p.get('text'): texts.append(f"Ист {i}:\n{p['text']}")
+            if p.get('source'): links.add(p['source'])
+            
+        context = "\n---\n".join(texts)
+        links_str = "\n".join([f"• {l}" for l in links])
+        
+        sys_prompt = "Ты аналитик Археон. Создай развернутый пост (1500-2000 симв) на основе новостей."
+        user_msg = f"ДАННЫЕ:\n{context}\n\nЗАДАНИЕ: Напиши экспертный пост. В конце ОБЯЗАТЕЛЬНО добавь заголовок '📌 Источники:' и ссылки:\n{links_str}"
+        
+        try:
+            response = await asyncio.wait_for(
+                self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": f"ИНСТРУКЦИЯ:\n{sys_prompt}\n\nЗАДАНИЕ:\n{user_msg}"}],
+                    max_completion_tokens=5000
+                ),
+                timeout=180.0
+            )
+            res = response.choices[0].message.content.strip()
+            return markdown_to_html(clean_ai_response(res))
+        except Exception as e:
+            logger.error(f"Ошибка генерации по источникам: {e}")
+            return f"📊 <b>Новости ИЖС</b>\n\n{context[:500]}..."
+
+    async def refine_post(self, original_post: str, edits: str) -> str:
+        sys_prompt = "Ты редактор Археон. Переработай текст с учетом правок, сохранив структуру и объем 1500-2000 симв."
+        user_msg = f"ТЕКСТ:\n{original_post}\n\nПРАВКИ:\n{edits}"
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": f"ИНСТРУКЦИЯ:\n{sys_prompt}\n\nЗАДАНИЕ:\n{user_msg}"}],
+                max_completion_tokens=5000
+            )
+            return markdown_to_html(clean_ai_response(response.choices[0].message.content.strip()))
+        except Exception:
+            return original_post
+
+    def _get_default_system_prompt(self) -> str:
+        return "Ты эксперт компании Археон. Пиши развернуто (1500-2000 симв), профессионально, с пользой для клиента."
+
+    def _get_photo_analysis_prompt(self) -> str:
+        return "Опиши этап работ, материалы, качество и детали на фото как инженер технадзора."
 
     def _get_fallback_source_post(self) -> str:
-        return "🏗️ Новости Археон: следите за обновлениями."
+        return "🏗️ <b>Новости Археон</b>\n\nСледим за рынком ИЖС Крыма. Подробности в следующих выпусках!"
 
-    async def analyze_sources(self, urls: List[str]) -> str:
-        if not urls: return ""
+    async def make_news_standalone(self, text: str) -> str:
+        return await self.refine_post(text, "Сделай новость полностью автономной, убери отсылки к прошлому.")
+        
+    async def analyze_video(self, video_path: str) -> str:
+        # Упрощенная версия через извлечение кадров (нужен cv2)
         try:
-            urls_text = "\n".join(urls)
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": f"Проанализируй эти ссылки для контекста:\n{urls_text}"}],
-                max_completion_tokens=1000
-            )
-            return response.choices[0].message.content.strip()
+            import cv2
+            cap = cv2.VideoCapture(video_path)
+            total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            descs = []
+            for i in range(3): # Берем 3 кадра
+                cap.set(cv2.CAP_PROP_POS_FRAMES, (total // 4) * (i + 1))
+                ret, frame = cap.read()
+                if ret:
+                    cv2.imwrite("temp_frame.jpg", frame)
+                    d = await self.analyze_photo("temp_frame.jpg")
+                    descs.append(d)
+            cap.release()
+            return "Анализ видео: " + " ".join(descs)
         except Exception:
-            return f"Контекст: {', '.join(urls)}"
-
-    async def generate_meme_idea(self, topic: str) -> str:
-        try:
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": f"Придумай строительный мем: {topic}"}],
-                max_completion_tokens=300
-            )
-            return response.choices[0].message.content.strip()
-        except Exception:
-            return "Идея для мема: прораб и сроки."
+            return "Видео процесса строительства Археон."
