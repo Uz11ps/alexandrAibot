@@ -58,12 +58,18 @@ class SourceParserService:
             # Преобразуем в нужный формат
             result = []
             for post in posts:
+                # Формируем прямую ссылку на пост в VK
+                # Формат: https://vk.com/wall-{owner_id}_{post_id}
+                owner_id = post.get('owner_id')
+                post_id = post.get('id')
+                direct_url = f"https://vk.com/wall{owner_id}_{post_id}" if owner_id and post_id else url
+                
                 result.append({
                     'text': post['text'],
-                    'source': url,
+                    'source': direct_url,
                     'source_type': 'vk',
                     'metadata': {
-                        'post_id': post.get('id'),
+                        'post_id': post_id,
                         'date': post.get('date'),
                         'likes': post.get('likes', 0),
                         'reposts': post.get('reposts', 0),
@@ -121,9 +127,13 @@ class SourceParserService:
                 if not message.text or not message.text.strip():
                     continue
                 
+                # Формируем прямую ссылку на сообщение в Telegram
+                # Формат: https://t.me/channel_username/message_id
+                direct_url = f"{url.rstrip('/')}/{message.id}"
+                
                 messages.append({
                     'text': message.text,
-                    'source': url,
+                    'source': direct_url,
                     'source_type': 'telegram',
                     'metadata': {
                         'message_id': message.id,
