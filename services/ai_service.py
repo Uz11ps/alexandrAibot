@@ -21,10 +21,11 @@ def clean_ai_response(text: str) -> str:
     # Удаляем заголовки-черновики, если они просочились
     text = re.sub(r'📝 Черновик поста для согласования:?\s*', '', text, flags=re.IGNORECASE)
     
-    # Исправляем тире и дефисы (заменяем двойные дефисы и короткие тире на длинные тире для экспертного стиля)
-    text = text.replace(' -- ', ' — ')
-    text = text.replace(' - ', ' — ')
-    text = re.sub(r'(\d)-(?=\d)', r'\1–', text) # Короткое тире для диапазонов цифр (например 2024–2025)
+    # Заменяем все виды длинных и средних тире на обычный дефис по просьбе заказчика
+    text = text.replace(' — ', ' - ')
+    text = text.replace(' – ', ' - ')
+    text = text.replace('—', '-')
+    text = text.replace('–', '-')
     
     # Удаляем технические примечания AI
     lines = text.split('\n')
@@ -90,7 +91,7 @@ class AIService:
         if settings.OPENAI_API_KEYS:
             additional_keys = [k.strip() for k in settings.OPENAI_API_KEYS.split(',')]
             self.api_keys.extend(additional_keys)
-            
+        
         # Настройка прокси
         http_client = None
         if settings.OPENAI_PROXY_ENABLED and settings.OPENAI_PROXY_URL:
@@ -101,21 +102,21 @@ class AIService:
                     parts = proxy.split(':')
                     normalized_proxies.append(f"http://{parts[2]}:{parts[3]}@{parts[0]}:{parts[1]}")
                 else:
-                    normalized_proxies.append(proxy)
+                normalized_proxies.append(proxy)
             self.proxy_list = normalized_proxies
             
             http_client = httpx.AsyncClient(
                 proxy=self.proxy_list[0],
                 timeout=httpx.Timeout(300.0, connect=60.0, read=300.0)
             )
-            
+        
         self.client = AsyncOpenAI(api_key=self.api_keys[0], http_client=http_client)
         self.model = settings.OPENAI_MODEL
         self.proxy_enabled = settings.OPENAI_PROXY_ENABLED
         
         # Поддержка temperature
         self.supports_temperature = not (self.model.startswith("gpt-5") or "o1" in self.model.lower())
-
+    
     def _switch_proxy(self):
         if len(self.proxy_list) > 1:
             self.current_proxy_index = (self.current_proxy_index + 1) % len(self.proxy_list)
@@ -127,7 +128,7 @@ class AIService:
             self.client = AsyncOpenAI(api_key=self.api_keys[self.current_api_key_index], http_client=http_client)
             return True
         return False
-
+    
     def _switch_api_key(self):
         if len(self.api_keys) > 1:
             self.current_api_key_index = (self.current_api_key_index + 1) % len(self.api_keys)
@@ -135,13 +136,13 @@ class AIService:
             self.client = AsyncOpenAI(api_key=self.api_keys[self.current_api_key_index])
             return True
         return False
-
+    
     async def generate_post_text(self, prompt: str, context: Optional[str] = None, photos_description: Optional[str] = None) -> str:
         if self.prompt_config_service:
             system_prompt = self.prompt_config_service.get_prompt("generate_post", "system_prompt") or self._get_default_system_prompt()
         else:
             system_prompt = self._get_default_system_prompt()
-            
+        
         user_msg = f"ИНСТРУКЦИЯ:\n{system_prompt}\n\nЗАДАНИЕ:\n{prompt}"
         if context: user_msg += f"\n\nКОНТЕКСТ:\n{context}"
         if photos_description: user_msg += f"\n\nОПИСАНИЕ МЕДИА:\n{photos_description}"
@@ -172,11 +173,11 @@ class AIService:
             except Exception as e2:
                 logger.error(f"Критическая ошибка даже на gpt-4o: {e2}")
                 return "📊 <b>Новости Археон</b>\n\nСледим за рынком ИЖС. Самые важные обновления подготовим в ближайшее время!"
-
+    
     async def analyze_photo(self, photo_path: str) -> str:
         import base64
-        from PIL import Image
-        import io
+            from PIL import Image
+            import io
         try:
             with Image.open(photo_path) as img:
                 if img.mode != 'RGB': img = img.convert('RGB')
@@ -195,8 +196,8 @@ class AIService:
                 self.client.chat.completions.create(
                     model="gpt-5.2",
                     messages=[{
-                        "role": "user",
-                        "content": [
+            "role": "user",
+            "content": [
                             {"type": "text", "text": f"ИНСТРУКЦИЯ: Проанализируй фото как технадзор Археон.\nЗАДАНИЕ: {prompt}"},
                             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
                         ]
@@ -215,7 +216,7 @@ class AIService:
             d = await self.analyze_photo(p)
             descs.append(f"Фото {i}: {d}")
         return "\n\n".join(descs)
-
+    
     async def generate_post_from_sources(self, source_posts: List[Dict[str, str]]) -> str:
         if not source_posts: return self._get_fallback_source_post()
         
@@ -239,7 +240,7 @@ class AIService:
 4. Стиль: деловой, экспертный, маркетинговый.
 5. Объем: 1500-2000 символов.
 6. Сделай текст автономным, как будто это эксклюзивная аналитика Археон.
-7. Используй правильную типографику: вместо двойных дефисов -- и коротких дефисов - используй длинное тире — (через clean_ai_response это будет обработано, но старайся писать сразу правильно).
+7. Используй обычные дефисы (-) вместо длинных тире.
 8. НИКОГДА не пиши, что у тебя нет доступа к ссылкам или интернету."""
 
         user_msg = f"ДАННЫЕ ИЗ ИСТОЧНИКОВ:\n{context}\n\nЗАДАНИЕ: Напиши экспертный пост БЕЗ ССЫЛОК внутри текста. Просто качественная аналитика на понятном для клиента языке."
@@ -269,7 +270,7 @@ class AIService:
         user_msg = f"ТЕКСТ:\n{original_post}\n\nПРАВКИ:\n{edits}"
         try:
             response = await self.client.chat.completions.create(
-                model=self.model,
+                                    model=self.model,
                 messages=[{"role": "user", "content": f"ИНСТРУКЦИЯ:\n{sys_prompt}\n\nЗАДАНИЕ:\n{user_msg}"}],
                 max_completion_tokens=5000
             )
@@ -282,12 +283,12 @@ class AIService:
 ПРАВИЛА ЯЗЫКА:
 1. Пиши как эксперт, но на понятном для обычного человека (заказчика дома) языке. 
 2. Сложные термины кратко поясняй. 
-3. Используй правильную типографику (длинные тире —). 
+3. Используй обычные дефисы (-) вместо длинных тире. 
 4. НИКОГДА не пиши, что у тебя нет доступа к интернету или свежим новостям - пиши уверенно как лидер рынка ИЖС в декабре 2025 года."""
 
     def _get_photo_analysis_prompt(self) -> str:
         return "Опиши этап работ, материалы, качество и детали на фото как инженер технадзора."
-
+    
     def _get_fallback_source_post(self) -> str:
         return "🏗️ <b>Новости Археон</b>\n\nСледим за рынком ИЖС Крыма. Подробности в следующих выпусках!"
 
