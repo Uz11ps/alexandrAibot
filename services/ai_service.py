@@ -102,7 +102,7 @@ class AIService:
                     parts = proxy.split(':')
                     normalized_proxies.append(f"http://{parts[2]}:{parts[3]}@{parts[0]}:{parts[1]}")
                 else:
-                normalized_proxies.append(proxy)
+                    normalized_proxies.append(proxy)
             self.proxy_list = normalized_proxies
             
             http_client = httpx.AsyncClient(
