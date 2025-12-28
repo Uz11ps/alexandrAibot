@@ -37,18 +37,20 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="📋 Отчеты", callback_data="menu_reports")
         ],
         [
-            InlineKeyboardButton(text="🔗 Генерация по источникам", callback_data="menu_sources_generate"),
-            InlineKeyboardButton(text="📐 Описание планировки", callback_data="menu_layout_description")
+            InlineKeyboardButton(text="🔗 Поиск в источниках", callback_data="menu_sources_generate")
         ],
         [
-            InlineKeyboardButton(text="🔗 Управление источниками", callback_data="menu_sources"),
-            InlineKeyboardButton(text="📅 Запланированные посты", callback_data="menu_scheduled_posts")
+            InlineKeyboardButton(text="📐 Описать планировку", callback_data="menu_layout_description")
         ],
         [
-            InlineKeyboardButton(text="✏️ Редактировать промпты", callback_data="menu_prompts")
+            InlineKeyboardButton(text="🔗 Список источников", callback_data="menu_sources"),
+            InlineKeyboardButton(text="📅 План публикаций", callback_data="menu_scheduled_posts")
         ],
         [
-            InlineKeyboardButton(text="🚀 Опубликовать сейчас", callback_data="post_now")
+            InlineKeyboardButton(text="✏️ Настройка AI", callback_data="menu_prompts")
+        ],
+        [
+            InlineKeyboardButton(text="🚀 Быстрый пост", callback_data="post_now")
         ],
         [
             InlineKeyboardButton(text="🔄 Обновить меню", callback_data="menu_refresh")
@@ -2635,7 +2637,7 @@ async def sources_generate_start(callback: CallbackQuery, state: FSMContext):
     await safe_answer_callback(callback)
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔍 Найти новости ИЖС автоматически", callback_data="sources_auto_search")],
+        [InlineKeyboardButton(text="🔍 Найти новости автоматически", callback_data="sources_auto_search")],
         [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_back")]
     ])
     
@@ -2689,7 +2691,13 @@ async def _perform_sources_search(query: Optional[str] = None) -> Dict:
     for p in sources_data:
         text = p.get('text', '').lower()
         title = p.get('title', '').lower()
+        link = p.get('source')
         combined_text = f"{title} {text}"
+        
+        # Проверка на дубликаты
+        if dependencies.news_deduplication_service:
+            if dependencies.news_deduplication_service.is_duplicate(text, link):
+                continue
         
         # Если есть конкретный запрос, ищем его
         if query:
@@ -2745,7 +2753,8 @@ async def sources_auto_search(callback: CallbackQuery, state: FSMContext):
         await state.update_data(
             generated_post_text=post_text, 
             generated_photo_paths=source_images[:3],
-            source_links=unique_links
+            source_links=unique_links,
+            used_sources_data=[{"text": s.get('text'), "url": s.get('source')} for s in final_sources]
         )
         await state.set_state(SourcesGenerationStates.waiting_for_approval)
         
@@ -2851,7 +2860,8 @@ async def sources_generate_process(message: Message, state: FSMContext):
         await state.update_data(
             generated_post_text=post_text, 
             generated_photo_paths=source_images[:3],
-            source_links=unique_links
+            source_links=unique_links,
+            used_sources_data=[{"text": s.get('text'), "url": s.get('source')} for s in sources_data]
         )
         await state.set_state(SourcesGenerationStates.waiting_for_approval)
         
@@ -3000,6 +3010,13 @@ async def handle_new_features_approve(callback: CallbackQuery, state: FSMContext
     if source_links and "Источники" not in post_text:
         links_block = "\n\n📌 <b>Источники:</b>\n" + "\n".join([f"• {url}" for url in source_links])
         post_text += links_block
+    
+    # Помечаем новости как использованные
+    used_sources_data = data.get('used_sources_data', [])
+    if used_sources_data and dependencies.news_deduplication_service:
+        for s in used_sources_data:
+            dependencies.news_deduplication_service.mark_as_used(s['text'], s['url'])
+        logger.info(f"Помечено {len(used_sources_data)} новостей как использованные")
     
     await callback.message.edit_reply_markup(reply_markup=None)
     status_msg = await callback.message.answer("🚀 Публикую пост...")
@@ -3967,11 +3984,10 @@ async def _generate_post_from_state(message: Message, state: FSMContext):
             
             if photo_paths:
                 try:
-                    if len(photo_paths) == 1:
-                        photo_description = await dependencies.ai_service.analyze_photo(photo_paths[0])
-                    else:
-                        photo_description = await dependencies.ai_service.analyze_multiple_photos(photo_paths)
-                        photo_description = await dependencies.ai_service.analyze_multiple_photos(photo_paths)
+                if len(photo_paths) == 1:
+                    photo_description = await dependencies.ai_service.analyze_photo(photo_paths[0])
+                else:
+                    photo_description = await dependencies.ai_service.analyze_multiple_photos(photo_paths)
                 except Exception as e:
                     logger.error(f"Ошибка при анализе фото: {e}", exc_info=True)
                     photo_description = f"Фотографии со строительного объекта. [Ошибка при анализе: {str(e)}]"

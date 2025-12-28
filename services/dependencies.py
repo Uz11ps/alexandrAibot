@@ -17,6 +17,7 @@ source_service: Optional = None
 source_parser_service: Optional = None
 vk_service: Optional = None
 post_history_service: Optional = None
+news_deduplication_service: Optional = None
 
 
 def init_services(bot, telegram_service_instance):
@@ -24,7 +25,7 @@ def init_services(bot, telegram_service_instance):
     global telegram_service, ai_service, post_service, file_service
     global employee_service, scheduler_service, scheduled_posts_service
     global prompt_config_service, source_service, source_parser_service
-    global vk_service, post_history_service
+    global vk_service, post_history_service, news_deduplication_service
     
     logger.info("Инициализация сервисов...")
     
@@ -35,6 +36,7 @@ def init_services(bot, telegram_service_instance):
     from services.scheduled_posts_service import ScheduledPostsService
     from services.source_service import SourceService
     from services.post_history_service import PostHistoryService
+    from services.news_deduplication_service import NewsDeduplicationService
     
     prompt_config_service = PromptConfigService()
     logger.info("PromptConfigService инициализирован")
@@ -58,6 +60,9 @@ def init_services(bot, telegram_service_instance):
     
     post_history_service = PostHistoryService()
     logger.info("PostHistoryService инициализирован")
+    
+    news_deduplication_service = NewsDeduplicationService()
+    logger.info("NewsDeduplicationService инициализирован")
     
     # Сервисы с зависимостями
     from services.ai_service import AIService
