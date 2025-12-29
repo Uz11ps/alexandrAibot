@@ -2653,12 +2653,13 @@ async def sources_generate_start(callback: CallbackQuery, state: FSMContext):
 
 async def _perform_sources_search(query: Optional[str] = None) -> Dict:
     """Вспомогательная функция для поиска по источникам"""
-    tg_channels = ["RussiaBuild", "ria_realty", "house_proekt", "dars_build", "stroyka_news", "m_khusnullin", "ria_realty", "domclick"]
+    tg_channels = ["RussiaBuild", "ria_realty", "house_proekt", "dars_build", "stroyka_news", "m_khusnullin", "domclick", "minstroyrf", "rosreestr_news"]
     rss_urls = [
         "https://rssexport.rbc.ru/rbc/news/3/full.rss", 
         "https://sev.gov.ru/bitrix/rss.php",
         "https://realty.rbc.ru/rss",
-        "https://tass.ru/rss/v2.xml"
+        "https://tass.ru/rss/v2.xml",
+        "https://rg.ru/xml/index.xml"
     ]
     
     sources_data = []
@@ -2666,7 +2667,8 @@ async def _perform_sources_search(query: Optional[str] = None) -> Dict:
     # 1. Парсим Telegram
     for ch in tg_channels:
         try:
-            posts = await dependencies.source_parser_service.parse_telegram_source(f"https://t.me/{ch}", count=15)
+            # Увеличиваем глубину поиска для разнообразия
+            posts = await dependencies.source_parser_service.parse_telegram_source(f"https://t.me/{ch}", count=20)
             sources_data.extend(posts)
         except: continue
 
@@ -2679,9 +2681,7 @@ async def _perform_sources_search(query: Optional[str] = None) -> Dict:
 
     # Фильтруем по ключевым словам
     keywords = ['ижс', 'крым', 'севастополь', 'закон', 'стройка', 'дом', 'земля', 'ипотека', 'участок', 'новости']
-    if query:
-        # Если есть запрос, добавляем его в приоритет
-        keywords.extend(query.lower().split())
+    query_words = query.lower().split() if query else []
         
     final_sources = []
     unique_links = []
@@ -2699,29 +2699,34 @@ async def _perform_sources_search(query: Optional[str] = None) -> Dict:
             if dependencies.news_deduplication_service.is_duplicate(text, link):
                 continue
         
-        # Если есть конкретный запрос, ищем его
-        if query:
-            query_words = query.lower().split()
-            if any(qw in combined_text for qw in query_words):
+        # Если есть конкретный запрос, ищем БОЛЕЕ ТОЧНОЕ совпадение
+        if query_words:
+            # Считаем количество совпадений слов запроса
+            matches = sum(1 for qw in query_words if qw in combined_text)
+            # Если совпало хотя бы 50% слов запроса или хотя бы одно (для коротких запросов)
+            if matches >= (len(query_words) + 1) // 2:
                 final_sources.append(p)
             else:
-                continue # Пропускаем если не соответствует запросу
+                continue
         else:
-            # Общий поиск
+            # Общий поиск: должно быть совпадение хотя бы одного ключевого слова
             if any(k in combined_text for k in keywords):
                 final_sources.append(p)
         
         # Сбор метаданных для подходящих
-        link = p.get('source')
         if link and link not in seen_links:
             unique_links.append(link)
             seen_links.add(link)
         if p.get('image') and p['image'] not in source_images:
             source_images.append(p['image'])
             
+    # Сортируем: если есть запрос, то сначала те, где больше совпадений
+    if query_words:
+        final_sources.sort(key=lambda x: sum(1 for qw in query_words if qw in (x.get('text', '') + x.get('title', '')).lower()), reverse=True)
+
     return {
-        "data": final_sources,
-        "links": unique_links,
+        "data": final_sources[:15], # Ограничиваем количество для ИИ
+        "links": unique_links[:15],
         "images": source_images
     }
 
@@ -2742,10 +2747,11 @@ async def sources_auto_search(callback: CallbackQuery, state: FSMContext):
         source_images = search_result["images"]
 
         if not final_sources:
-            post_text = await dependencies.ai_service.generate_post_text("Напиши экспертный дайджест новостей ИЖС Крыма за декабрь 2025.")
+            post_text = await dependencies.ai_service.generate_post_text(f"Напиши экспертный пост на тему: {query if query else 'Новости ИЖС Крыма декабрь 2025'}. Пиши простым человеческим языком без жаргона.")
             unique_links = ["https://t.me/RussiaBuild", "https://blog.domclick.ru/"]
         else:
-            post_text = await dependencies.ai_service.generate_post_from_sources(final_sources)
+            # Передаем запрос в AI, чтобы он знал приоритетную тему
+            post_text = await dependencies.ai_service.generate_post_from_sources(final_sources, topic=query)
 
         await loading_msg.delete()
         
@@ -2847,10 +2853,10 @@ async def sources_generate_process(message: Message, state: FSMContext):
         
         # Генерируем текст
         if sources_data:
-            post_text = await dependencies.ai_service.generate_post_from_sources(sources_data)
+            post_text = await dependencies.ai_service.generate_post_from_sources(sources_data, topic=input_text if not urls else None)
         else:
             # Если ничего не нашли, пробуем сгенерировать по теме, но честно предупреждаем ИИ
-            prompt = f"Напиши актуальную статью на тему: {input_text}. Используй свои знания о рынке ИЖС 2024-2025 года. Пиши экспертно, но понятно."
+            prompt = f"Напиши актуальную статью на тему: {input_text}. Используй свои знания о рынке ИЖС 2024-2025 года. Пиши экспертно, но понятно. Избегай жаргона."
             post_text = await dependencies.ai_service.generate_post_text(prompt=prompt)
             unique_links = []
         
