@@ -2653,6 +2653,15 @@ async def sources_generate_start(callback: CallbackQuery, state: FSMContext):
 
 async def _perform_sources_search(query: Optional[str] = None) -> Dict:
     """Вспомогательная функция для поиска по источникам"""
+    # 1. Сначала пробуем Tavily (самый актуальный поиск) если есть запрос
+    web_results = []
+    if query and dependencies.tavily_service:
+        try:
+            logger.info(f"Выполняю веб-поиск через Tavily по запросу: {query}")
+            web_results = await dependencies.tavily_service.search(query=query, max_results=10)
+        except Exception as e:
+            logger.error(f"Ошибка веб-поиска Tavily: {e}")
+
     tg_channels = ["RussiaBuild", "ria_realty", "house_proekt", "dars_build", "stroyka_news", "m_khusnullin", "domclick", "minstroyrf", "rosreestr_news"]
     rss_urls = [
         "https://rssexport.rbc.ru/rbc/news/3/full.rss", 
@@ -2664,22 +2673,21 @@ async def _perform_sources_search(query: Optional[str] = None) -> Dict:
     
     sources_data = []
     
-    # 1. Парсим Telegram
+    # 2. Парсим Telegram (всегда для разнообразия)
     for ch in tg_channels:
         try:
-            # Увеличиваем глубину поиска для разнообразия
-            posts = await dependencies.source_parser_service.parse_telegram_source(f"https://t.me/{ch}", count=20)
+            posts = await dependencies.source_parser_service.parse_telegram_source(f"https://t.me/{ch}", count=15)
             sources_data.extend(posts)
         except: continue
 
-    # 2. Парсим RSS
+    # 3. Парсим RSS
     for url in rss_urls:
         try:
             news = await dependencies.source_parser_service.fetch_rss(url)
             sources_data.extend(news)
         except: continue
 
-    # Фильтруем по ключевым словам
+    # Фильтруем и объединяем
     keywords = ['ижс', 'крым', 'севастополь', 'закон', 'стройка', 'дом', 'земля', 'ипотека', 'участок', 'новости']
     query_words = query.lower().split() if query else []
         
@@ -2688,46 +2696,50 @@ async def _perform_sources_search(query: Optional[str] = None) -> Dict:
     source_images = []
     seen_links = set()
     
+    # Сначала добавляем результаты из веба (Tavily)
+    for p in web_results:
+        link = p.get('source')
+        if link and link not in seen_links:
+            final_sources.append(p)
+            unique_links.append(link)
+            seen_links.add(link)
+
+    # Затем добавляем из соцсетей, фильтруя
     for p in sources_data:
         text = p.get('text', '').lower()
         title = p.get('title', '').lower()
         link = p.get('source')
         combined_text = f"{title} {text}"
         
-        # Проверка на дубликаты
         if dependencies.news_deduplication_service:
             if dependencies.news_deduplication_service.is_duplicate(text, link):
                 continue
         
-        # Если есть конкретный запрос, ищем БОЛЕЕ ТОЧНОЕ совпадение
+        is_relevant = False
         if query_words:
-            # Считаем количество совпадений слов запроса
             matches = sum(1 for qw in query_words if qw in combined_text)
-            # Если совпало хотя бы 50% слов запроса или хотя бы одно (для коротких запросов)
             if matches >= (len(query_words) + 1) // 2:
-                final_sources.append(p)
-            else:
-                continue
+                is_relevant = True
         else:
-            # Общий поиск: должно быть совпадение хотя бы одного ключевого слова
             if any(k in combined_text for k in keywords):
-                final_sources.append(p)
+                is_relevant = True
         
-        # Сбор метаданных для подходящих
-        if link and link not in seen_links:
+        if is_relevant and link not in seen_links:
+            final_sources.append(p)
             unique_links.append(link)
             seen_links.add(link)
-        if p.get('image') and p['image'] not in source_images:
-            source_images.append(p['image'])
+            if p.get('image'):
+                source_images.append(p['image'])
             
-    # Сортируем: если есть запрос, то сначала те, где больше совпадений
-    if query_words:
-        final_sources.sort(key=lambda x: sum(1 for qw in query_words if qw in (x.get('text', '') + x.get('title', '')).lower()), reverse=True)
+    # Если результатов всё еще мало и есть запрос - пробуем расширенный поиск
+    if len(final_sources) < 3 and query and not web_results:
+        # Это случай если Tavily не сработал или не был настроен
+        pass
 
     return {
-        "data": final_sources[:15], # Ограничиваем количество для ИИ
+        "data": final_sources[:15], 
         "links": unique_links[:15],
-        "images": source_images
+        "images": source_images[:5]
     }
 
 

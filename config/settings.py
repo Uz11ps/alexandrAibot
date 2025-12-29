@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     OPENAI_PROXY_ENABLED: bool = False
     OPENAI_PROXY_URL: Optional[str] = None  # Формат: https://user:pass@host:port или список через запятую
     
+    # Tavily
+    TAVILY_API_KEY: Optional[str] = None
+    
     # Пути к папкам
     PHOTOS_FOLDER: str = "storage/photos"
     DRAFTS_FOLDER: str = "storage/drafts"
