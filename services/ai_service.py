@@ -102,7 +102,7 @@ class AIService:
                     parts = proxy.split(':')
                     normalized_proxies.append(f"http://{parts[2]}:{parts[3]}@{parts[0]}:{parts[1]}")
                 else:
-                normalized_proxies.append(proxy)
+                    normalized_proxies.append(proxy)
             self.proxy_list = normalized_proxies
             
             http_client = httpx.AsyncClient(
@@ -176,8 +176,8 @@ class AIService:
     
     async def analyze_photo(self, photo_path: str) -> str:
         import base64
-            from PIL import Image
-            import io
+        from PIL import Image
+        import io
         try:
             with Image.open(photo_path) as img:
                 if img.mode != 'RGB': img = img.convert('RGB')
