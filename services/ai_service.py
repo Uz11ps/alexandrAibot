@@ -230,7 +230,7 @@ class AIService:
             
         context = "\n\n---\n\n".join(context_items)
         
-    sys_prompt = """Ты — голос компании Археон. Твоя задача: написать пост для соцсетей на основе свежих новостей. 
+        sys_prompt = """Ты — голос компании Археон. Твоя задача: написать пост для соцсетей на основе свежих новостей. 
 
 КРИТИЧЕСКИЕ ТРЕБОВАНИЯ К СТИЛЮ И ТЕРМИНАМ:
 1. НИКАКОГО ОФИЦИОЗА: Пиши так, будто ты рассказываешь это другу за чашкой кофе. Избегай оборотов "сообщается", "обсуждается", "рынок входит в фазу".
@@ -277,7 +277,7 @@ class AIService:
         user_msg = f"ТЕКСТ:\n{original_post}\n\nПРАВКИ:\n{edits}"
         try:
             response = await self.client.chat.completions.create(
-                    model=self.model,
+                model=self.model,
                 messages=[{"role": "user", "content": f"ИНСТРУКЦИЯ:\n{sys_prompt}\n\nЗАДАНИЕ:\n{user_msg}"}],
                 max_completion_tokens=5000
             )
