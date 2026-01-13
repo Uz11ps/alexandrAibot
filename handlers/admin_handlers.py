@@ -25,15 +25,15 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
     """Создает клавиатуру главного меню"""
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="📊 Статус бота", callback_data="menu_status"),
-            InlineKeyboardButton(text="📤 Загрузить файл", callback_data="menu_upload")
+            InlineKeyboardButton(text="📊 Статус", callback_data="menu_status"),
+            InlineKeyboardButton(text="📤 Загрузить", callback_data="menu_upload")
         ],
         [
             InlineKeyboardButton(text="📅 Расписание", callback_data="menu_schedule"),
             InlineKeyboardButton(text="👥 Сотрудники", callback_data="menu_employees")
         ],
         [
-            InlineKeyboardButton(text="📝 Сгенерировать пост", callback_data="menu_generate")
+            InlineKeyboardButton(text="📝 Создать пост", callback_data="menu_generate")
         ],
         [
             InlineKeyboardButton(text="🔗 Поиск в источниках", callback_data="menu_sources_generate")
@@ -42,10 +42,8 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="📐 Описать планировку", callback_data="menu_layout_description")
         ],
         [
-            InlineKeyboardButton(text="🔗 Список источников", callback_data="menu_sources")
-        ],
-        [
-            InlineKeyboardButton(text="📅 План публикаций", callback_data="menu_scheduled_posts")
+            InlineKeyboardButton(text="🔗 Источники", callback_data="menu_sources"),
+            InlineKeyboardButton(text="📅 План постов", callback_data="menu_scheduled_posts")
         ],
         [
             InlineKeyboardButton(text="📋 Отчеты", callback_data="menu_reports"),
@@ -55,7 +53,7 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🚀 Быстрый пост", callback_data="post_now")
         ],
         [
-            InlineKeyboardButton(text="🔄 Обновить меню", callback_data="menu_refresh")
+            InlineKeyboardButton(text="🔄 Обновить", callback_data="menu_refresh")
         ]
     ])
     return keyboard
@@ -4012,10 +4010,10 @@ async def _generate_post_from_state(message: Message, state: FSMContext):
             
             if photo_paths:
                 try:
-                    if len(photo_paths) == 1:
-                        photo_description = await dependencies.ai_service.analyze_photo(photo_paths[0])
-                    else:
-                        photo_description = await dependencies.ai_service.analyze_multiple_photos(photo_paths)
+                if len(photo_paths) == 1:
+                    photo_description = await dependencies.ai_service.analyze_photo(photo_paths[0])
+                else:
+                    photo_description = await dependencies.ai_service.analyze_multiple_photos(photo_paths)
                 except Exception as e:
                     logger.error(f"Ошибка при анализе фото: {e}", exc_info=True)
                     photo_description = f"Фотографии со строительного объекта. [Ошибка при анализе: {str(e)}]"
