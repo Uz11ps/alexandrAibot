@@ -2982,7 +2982,8 @@ async def layout_description_process(message: Message, state: FSMContext):
         # Используем gpt-5 для генерации описания
         post_text = await dependencies.ai_service.generate_post_text(
             prompt=user_prompt,
-            photos_description=photos_description
+            photos_description=photos_description,
+            prompt_key="layout_description"
         )
         
         await loading_msg.delete()
