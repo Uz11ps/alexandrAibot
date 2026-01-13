@@ -33,8 +33,7 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="👥 Сотрудники", callback_data="menu_employees")
         ],
         [
-            InlineKeyboardButton(text="📝 Сгенерировать пост", callback_data="menu_generate"),
-            InlineKeyboardButton(text="📋 Отчеты", callback_data="menu_reports")
+            InlineKeyboardButton(text="📝 Сгенерировать пост", callback_data="menu_generate")
         ],
         [
             InlineKeyboardButton(text="🔗 Поиск в источниках", callback_data="menu_sources_generate")
@@ -43,10 +42,13 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="📐 Описать планировку", callback_data="menu_layout_description")
         ],
         [
-            InlineKeyboardButton(text="🔗 Список источников", callback_data="menu_sources"),
+            InlineKeyboardButton(text="🔗 Список источников", callback_data="menu_sources")
+        ],
+        [
             InlineKeyboardButton(text="📅 План публикаций", callback_data="menu_scheduled_posts")
         ],
         [
+            InlineKeyboardButton(text="📋 Отчеты", callback_data="menu_reports"),
             InlineKeyboardButton(text="✏️ Настройка AI", callback_data="menu_prompts")
         ],
         [
@@ -90,7 +92,9 @@ def get_generate_post_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(
                 text=f"Понедельник ({post_types_config.get_post_type('monday')['name']})",
                 callback_data="generate_monday"
-            ),
+            )
+        ],
+        [
             InlineKeyboardButton(
                 text=f"Вторник ({post_types_config.get_post_type('tuesday')['name']})",
                 callback_data="generate_tuesday"
@@ -100,7 +104,9 @@ def get_generate_post_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(
                 text=f"Среда ({post_types_config.get_post_type('wednesday')['name']})",
                 callback_data="generate_wednesday"
-            ),
+            )
+        ],
+        [
             InlineKeyboardButton(
                 text=f"Четверг ({post_types_config.get_post_type('thursday')['name']})",
                 callback_data="generate_thursday"
@@ -110,7 +116,9 @@ def get_generate_post_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(
                 text=f"Пятница ({post_types_config.get_post_type('friday')['name']})",
                 callback_data="generate_friday"
-            ),
+            )
+        ],
+        [
             InlineKeyboardButton(
                 text=f"Суббота ({post_types_config.get_post_type('saturday')['name']})",
                 callback_data="generate_saturday"
@@ -863,7 +871,9 @@ async def menu_employees(callback: CallbackQuery):
             InlineKeyboardButton(text="➕ Добавить сотрудника", callback_data="employee_add")
         ],
         [
-            InlineKeyboardButton(text="📤 Отправить запрос", callback_data="employee_request"),
+            InlineKeyboardButton(text="📤 Отправить запрос", callback_data="employee_request")
+        ],
+        [
             InlineKeyboardButton(text="⏳ Активные запросы", callback_data="employees_pending")
         ],
         [
