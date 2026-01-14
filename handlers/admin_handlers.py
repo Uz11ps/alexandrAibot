@@ -2960,7 +2960,7 @@ async def layout_description_process(message: Message, state: FSMContext):
         return
     
     photo = message.photo[-1]
-    loading_msg = await message.answer("⏳ <b>Анализирую планировку...</b>\nАрхитектор Архион изучает чертеж.", parse_mode="HTML")
+    loading_msg = await message.answer("⏳ <b>Анализирую планировку...</b>\nАрхитектор АрхИон изучает чертеж.", parse_mode="HTML")
     
     try:
         # Скачиваем фото
@@ -2977,7 +2977,7 @@ async def layout_description_process(message: Message, state: FSMContext):
         photos_description = await dependencies.ai_service.analyze_photo(str(photo_path))
         
         # Генерация текста
-        system_prompt = prompt_info.get("system_prompt", "Ты архитектор Архион.")
+        system_prompt = prompt_info.get("system_prompt", "Ты архитектор АрхИон.")
         
         # Используем gpt-5 для генерации описания
         post_text = await dependencies.ai_service.generate_post_text(
@@ -3504,10 +3504,12 @@ async def post_now_process_prompt(message: Message, state: FSMContext):
                 if context_from_history:
                     prompt_with_media += f"\n\nКонтекст из успешных похожих постов:\n{context_from_history}"
                 
+                # Для видео используем специальный промпт
                 post_text = await dependencies.ai_service.generate_post_text(
                     prompt=prompt_with_media,
                     photos_description=combined_description,
-                    context=context_from_history if context_from_history else None
+                    context=context_from_history if context_from_history else None,
+                    prompt_key="video_description"  # Используем специальный промпт для видео
                 )
                 
                 # Сохраняем в историю
@@ -3538,10 +3540,12 @@ async def post_now_process_prompt(message: Message, state: FSMContext):
                 if context_from_history:
                     prompt_with_video += f"\n\nКонтекст из успешных похожих постов:\n{context_from_history}"
                 
+                # Для видео используем специальный промпт
                 post_text = await dependencies.ai_service.generate_post_text(
                     prompt=prompt_with_video,
                     photos_description=video_description,
-                    context=context_from_history if context_from_history else None
+                    context=context_from_history if context_from_history else None,
+                    prompt_key="video_description"  # Используем специальный промпт для видео
                 )
                 
                 # Сохраняем в историю
@@ -3566,8 +3570,7 @@ async def post_now_process_prompt(message: Message, state: FSMContext):
             from services.ai_service import clean_ai_response, markdown_to_html
             post_text = clean_ai_response(post_text)
             post_text = markdown_to_html(post_text)
-            if len(post_text) > 4000:
-                post_text = post_text[:4000] + "..."
+            # Убрана обрезка поста - теперь генерируется полный текст
             
             photos = []  # Видео будет обработано отдельно при публикации
         else:
@@ -4011,14 +4014,14 @@ async def _generate_post_from_state(message: Message, state: FSMContext):
             
             if photo_paths:
                 try:
-                if len(photo_paths) == 1:
-                    photo_description = await dependencies.ai_service.analyze_photo(photo_paths[0])
-                else:
-                    photo_description = await dependencies.ai_service.analyze_multiple_photos(photo_paths)
+                    if len(photo_paths) == 1:
+                        photo_description = await dependencies.ai_service.analyze_photo(photo_paths[0])
+                    else:
+                        photo_description = await dependencies.ai_service.analyze_multiple_photos(photo_paths)
                 except Exception as e:
                     logger.error(f"Ошибка при анализе фото: {e}", exc_info=True)
                     photo_description = f"Фотографии со строительного объекта. [Ошибка при анализе: {str(e)}]" 
-                
+
                 combined_description = f"{photo_description}\n\n{video_description}" if video_description else photo_description
                 
                 prompt_with_media = f"""{prompt}
@@ -4033,10 +4036,12 @@ async def _generate_post_from_state(message: Message, state: FSMContext):
                 if context_from_history:
                     prompt_with_media += f"\n\nКонтекст из успешных похожих постов:\n{context_from_history}"
                 
+                # Для видео используем специальный промпт
                 post_text = await dependencies.ai_service.generate_post_text(
                     prompt=prompt_with_media,
                     photos_description=combined_description,
-                    context=context_from_history if context_from_history else None
+                    context=context_from_history if context_from_history else None,
+                    prompt_key="video_description"  # Используем специальный промпт для видео
                 )
             else:
                 prompt_with_video = f"""{prompt}
@@ -4050,17 +4055,18 @@ async def _generate_post_from_state(message: Message, state: FSMContext):
                 if context_from_history:
                     prompt_with_video += f"\n\nКонтекст из успешных похожих постов:\n{context_from_history}"
                 
+                # Для видео используем специальный промпт
                 post_text = await dependencies.ai_service.generate_post_text(
                     prompt=prompt_with_video,
                     photos_description=video_description,
-                    context=context_from_history if context_from_history else None
+                    context=context_from_history if context_from_history else None,
+                    prompt_key="video_description"  # Используем специальный промпт для видео
                 )
             
             from services.ai_service import clean_ai_response, markdown_to_html
             post_text = clean_ai_response(post_text)
             post_text = markdown_to_html(post_text)
-            if len(post_text) > 4000:
-                post_text = post_text[:4000] + "..."
+            # Убрана обрезка поста - теперь генерируется полный текст
             
             photos = []
         else:
