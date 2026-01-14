@@ -2960,7 +2960,7 @@ async def layout_description_process(message: Message, state: FSMContext):
         return
     
     photo = message.photo[-1]
-    loading_msg = await message.answer("⏳ <b>Анализирую планировку...</b>\nАрхитектор Археон изучает чертеж.", parse_mode="HTML")
+    loading_msg = await message.answer("⏳ <b>Анализирую планировку...</b>\nАрхитектор Архион изучает чертеж.", parse_mode="HTML")
     
     try:
         # Скачиваем фото
@@ -2977,7 +2977,7 @@ async def layout_description_process(message: Message, state: FSMContext):
         photos_description = await dependencies.ai_service.analyze_photo(str(photo_path))
         
         # Генерация текста
-        system_prompt = prompt_info.get("system_prompt", "Ты архитектор Археон.")
+        system_prompt = prompt_info.get("system_prompt", "Ты архитектор Архион.")
         
         # Используем gpt-5 для генерации описания
         post_text = await dependencies.ai_service.generate_post_text(
@@ -3566,8 +3566,8 @@ async def post_now_process_prompt(message: Message, state: FSMContext):
             from services.ai_service import clean_ai_response, markdown_to_html
             post_text = clean_ai_response(post_text)
             post_text = markdown_to_html(post_text)
-            if len(post_text) > 900:
-                post_text = post_text[:900] + "..."
+            if len(post_text) > 4000:
+                post_text = post_text[:4000] + "..."
             
             photos = []  # Видео будет обработано отдельно при публикации
         else:
@@ -4011,14 +4011,14 @@ async def _generate_post_from_state(message: Message, state: FSMContext):
             
             if photo_paths:
                 try:
-                    if len(photo_paths) == 1:
-                        photo_description = await dependencies.ai_service.analyze_photo(photo_paths[0])
-                    else:
-                        photo_description = await dependencies.ai_service.analyze_multiple_photos(photo_paths)
+                if len(photo_paths) == 1:
+                    photo_description = await dependencies.ai_service.analyze_photo(photo_paths[0])
+                else:
+                    photo_description = await dependencies.ai_service.analyze_multiple_photos(photo_paths)
                 except Exception as e:
                     logger.error(f"Ошибка при анализе фото: {e}", exc_info=True)
                     photo_description = f"Фотографии со строительного объекта. [Ошибка при анализе: {str(e)}]" 
-
+                
                 combined_description = f"{photo_description}\n\n{video_description}" if video_description else photo_description
                 
                 prompt_with_media = f"""{prompt}
@@ -4059,8 +4059,8 @@ async def _generate_post_from_state(message: Message, state: FSMContext):
             from services.ai_service import clean_ai_response, markdown_to_html
             post_text = clean_ai_response(post_text)
             post_text = markdown_to_html(post_text)
-            if len(post_text) > 900:
-                post_text = post_text[:900] + "..."
+            if len(post_text) > 4000:
+                post_text = post_text[:4000] + "..."
             
             photos = []
         else:
