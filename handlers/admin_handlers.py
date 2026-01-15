@@ -2974,7 +2974,8 @@ async def layout_description_process(message: Message, state: FSMContext):
         user_prompt = prompt_info.get("user_prompt", "Проанализируй планировку на фото.")
         
         # Анализ изображения
-        photos_description = await dependencies.ai_service.analyze_photo(str(photo_path))
+        analysis_prompt = "Детально опиши планировку дома на чертеже: зоны (спальная, дневная), размеры комнат, наличие террас, санузлов, котельной. Оцени удобство для жизни семьи. Не пиши про стройку, только про планировку."
+        photos_description = await dependencies.ai_service.analyze_photo(str(photo_path), prompt_override=analysis_prompt)
         
         # Генерация текста
         system_prompt = prompt_info.get("system_prompt", "Ты архитектор АрхИон.")

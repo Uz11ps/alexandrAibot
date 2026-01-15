@@ -174,7 +174,7 @@ class AIService:
                 logger.error(f"Критическая ошибка даже на gpt-4o: {e2}")
                 return "📊 <b>Новости АрхИон</b>\n\nСледим за рынком ИЖС. Самые важные обновления подготовим в ближайшее время!"
     
-    async def analyze_photo(self, photo_path: str) -> str:
+    async def analyze_photo(self, photo_path: str, prompt_override: Optional[str] = None) -> str:
         import base64
         from PIL import Image
         import io
@@ -189,7 +189,13 @@ class AIService:
             with open(photo_path, "rb") as f: image_data = f.read()
             
         b64 = base64.b64encode(image_data).decode('utf-8')
-        prompt = self._get_photo_analysis_prompt()
+        
+        if prompt_override:
+            prompt = prompt_override
+            instruction = "ИНСТРУКЦИЯ: Проанализируй изображение."
+        else:
+            prompt = self._get_photo_analysis_prompt()
+            instruction = "ИНСТРУКЦИЯ: Проанализируй фото как технадзор АрхИон."
         
         try:
             response = await asyncio.wait_for(
@@ -198,7 +204,7 @@ class AIService:
                     messages=[{
             "role": "user",
             "content": [
-                            {"type": "text", "text": f"ИНСТРУКЦИЯ: Проанализируй фото как технадзор АрхИон.\nЗАДАНИЕ: {prompt}"},
+                            {"type": "text", "text": f"{instruction}\nЗАДАНИЕ: {prompt}"},
                             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
                         ]
                     }],
