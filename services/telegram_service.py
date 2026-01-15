@@ -238,23 +238,43 @@ class TelegramService:
             
             if photos:
                 # Отправляем с фото
+                MAX_CAPTION_LENGTH = 1024
+                
                 if len(photos) == 1:
                     # Одно фото
                     photo_input = self._get_photo_input(photos[0])
-                    await self.bot.send_photo(
-                        chat_id=channel_id,
-                        photo=photo_input,
-                        caption=post_text,
-                        parse_mode="HTML"
-                    )
+                    
+                    if len(post_text) <= MAX_CAPTION_LENGTH:
+                        await self.bot.send_photo(
+                            chat_id=channel_id,
+                            photo=photo_input,
+                            caption=post_text,
+                            parse_mode="HTML"
+                        )
+                    else:
+                        # Текст слишком длинный для подписи - отправляем фото и текст отдельно
+                        await self.bot.send_photo(
+                            chat_id=channel_id,
+                            photo=photo_input,
+                            parse_mode="HTML"
+                        )
+                        await self.bot.send_message(
+                            chat_id=channel_id,
+                            text=post_text,
+                            parse_mode="HTML"
+                        )
                 else:
                     # Несколько фото - отправляем медиагруппу
                     from aiogram.types import InputMediaPhoto
                     media_group = []
+                    
+                    # Если текст длинный, отправим его отдельным сообщением после группы
+                    send_text_separately = len(post_text) > MAX_CAPTION_LENGTH
+                    
                     for i, p in enumerate(photos):
                         photo_input = self._get_photo_input(p)
-                        if i == 0:
-                            # Первое фото с подписью
+                        if i == 0 and not send_text_separately:
+                            # Первое фото с подписью (только если текст не длинный)
                             media_group.append(
                                 InputMediaPhoto(
                                     media=photo_input,
@@ -272,6 +292,13 @@ class TelegramService:
                             chat_id=channel_id,
                             media=media_group
                         )
+                        
+                        if send_text_separately:
+                            await self.bot.send_message(
+                                chat_id=channel_id,
+                                text=post_text,
+                                parse_mode="HTML"
+                            )
             else:
                 # Отправляем только текст
                 await self.bot.send_message(

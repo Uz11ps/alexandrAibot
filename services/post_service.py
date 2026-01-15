@@ -150,8 +150,7 @@ class PostService:
         post_text = clean_ai_response(post_text)
         post_text = markdown_to_html(post_text)
         
-        if len(post_text) > 4000:
-            post_text = post_text[:4000] + "..."
+        # Обрезка убрана по просьбе заказчика, теперь генерируется полный текст
         
         # Сохраняем в историю
         request_id = None

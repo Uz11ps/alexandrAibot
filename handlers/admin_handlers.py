@@ -3009,12 +3009,28 @@ async def layout_description_process(message: Message, state: FSMContext):
             [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_back")]
         ])
         
-        await message.answer_photo(
-            photo=FSInputFile(str(photo_path)),
-            caption=f"📐 <b>Описание планировки:</b>\n\n{post_text}",
-            reply_markup=keyboard,
-            parse_mode="HTML"
-        )
+        MAX_CAPTION_LENGTH = 1024
+        header = "📐 <b>Описание планировки:</b>\n\n"
+        full_text = f"{header}{post_text}"
+        
+        if len(full_text) <= MAX_CAPTION_LENGTH:
+            await message.answer_photo(
+                photo=FSInputFile(str(photo_path)),
+                caption=full_text,
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+        else:
+            await message.answer_photo(
+                photo=FSInputFile(str(photo_path)),
+                caption=f"{header}📝 Полный текст ниже ⬇️",
+                parse_mode="HTML"
+            )
+            await message.answer(
+                text=full_text,
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
         
     except Exception as e:
         logger.error(f"Ошибка в layout_description_process: {e}", exc_info=True)
