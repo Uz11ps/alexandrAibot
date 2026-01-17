@@ -2043,7 +2043,7 @@ async def process_edits(message: Message, state: FSMContext):
                 from aiogram.types import InputMediaPhoto
                 
                 MAX_CAPTION_LENGTH = 1024
-                user_tag = f"👤 <b>Сгенерировано пользователем:</b> {username}\n"
+                user_tag = f"👤 <b>Автор:</b> {username}\n"
                 header = f"{user_tag}📝 <b>Черновик поста для согласования (после правок):</b>\n\n"
                 full_text = f"{header}{refined_post}"
                 
@@ -2110,7 +2110,11 @@ async def process_edits(message: Message, state: FSMContext):
                     status="pending"
                 )
             
-            await dependencies.post_service.send_for_approval(refined_post, original_photos)
+            # Получаем имя пользователя
+            user = message.from_user
+            username = f"@{user.username}" if user.username else user.full_name
+            
+            await dependencies.post_service.send_for_approval(refined_post, original_photos, triggered_by=username)
             
             await message.answer(
                 "✅ <b>Пост переработан и отправлен на согласование!</b>\n\n"
@@ -4303,7 +4307,7 @@ async def _generate_post_from_state(message: Message, state: FSMContext):
             from aiogram.types import InputMediaPhoto
             
             MAX_CAPTION_LENGTH = 1024
-            user_tag = f"👤 <b>Сгенерировано пользователем:</b> {username}\n"
+            user_tag = f"👤 <b>Автор:</b> {username}\n"
             header = f"{user_tag}📝 <b>Черновик поста для согласования:</b>\n\n"
             full_text = f"{header}{post_text}"
             
