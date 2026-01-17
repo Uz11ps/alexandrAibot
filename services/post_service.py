@@ -249,7 +249,8 @@ class PostService:
         self,
         post_text: str,
         photos: List[str],
-        day_of_week: Optional[str] = None
+        day_of_week: Optional[str] = None,
+        triggered_by: Optional[str] = None
     ):
         """
         Отправляет пост на согласование администратору
@@ -258,11 +259,12 @@ class PostService:
             post_text: Текст поста
             photos: Список путей к фотографиям
             day_of_week: День недели (опционально)
+            triggered_by: Имя пользователя, инициировавшего генерацию (опционально)
         """
         logger.info(f"Отправка поста на согласование. Длина текста: {len(post_text)}, фото: {len(photos)}")
         
         # Отправляем через telegram_service
-        await self.telegram_service.send_for_approval(post_text, photos, day_of_week=day_of_week)
+        await self.telegram_service.send_for_approval(post_text, photos, day_of_week=day_of_week, triggered_by=triggered_by)
     
     async def publish_approved_post(
         self,

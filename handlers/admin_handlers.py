@@ -565,7 +565,12 @@ async def handle_generate_post(callback: CallbackQuery):
         
         # Отправляем на согласование с указанием дня недели
         logger.info(f"Отправка поста на согласование для дня: {post_type}")
-        await dependencies.post_service.send_for_approval(post_text, photos, day_of_week=post_type)
+        
+        # Получаем имя пользователя
+        user = callback.from_user
+        username = f"@{user.username}" if user.username else user.full_name
+        
+        await dependencies.post_service.send_for_approval(post_text, photos, day_of_week=post_type, triggered_by=username)
         logger.info(f"Пост отправлен на согласование")
         
         await safe_edit_message(
@@ -2015,6 +2020,10 @@ async def process_edits(message: Message, state: FSMContext):
             )
             await state.set_state(PostNowStates.waiting_for_approval)
             
+            # Получаем имя пользователя
+            user = message.from_user
+            username = f"@{user.username}" if user.username else user.full_name
+            
             # Сохраняем фото для черновика
             dependencies.telegram_service._draft_photos[message.message_id] = original_photo_paths.copy()
             
@@ -2034,7 +2043,8 @@ async def process_edits(message: Message, state: FSMContext):
                 from aiogram.types import InputMediaPhoto
                 
                 MAX_CAPTION_LENGTH = 1024
-                header = "📝 <b>Черновик поста для согласования (после правок):</b>\n\n"
+                user_tag = f"👤 <b>Сгенерировано пользователем:</b> {username}\n"
+                header = f"{user_tag}📝 <b>Черновик поста для согласования (после правок):</b>\n\n"
                 full_text = f"{header}{refined_post}"
                 
                 if len(original_photo_paths) == 1:
@@ -2891,6 +2901,10 @@ async def sources_auto_search(callback: CallbackQuery, state: FSMContext):
         )
         await state.set_state(SourcesGenerationStates.waiting_for_approval)
         
+        # Получаем имя пользователя
+        user = callback.from_user
+        username = f"@{user.username}" if user.username else user.full_name
+        
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text="✅ Опубликовать", callback_data="sources_approve"),
@@ -2899,11 +2913,13 @@ async def sources_auto_search(callback: CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_back")]
         ])
         
+        user_tag = f"👤 <b>Сгенерировано пользователем:</b> {username}\n"
+        
         # Отправляем пост
         if source_images:
             from aiogram.types import InputMediaPhoto
             media = [InputMediaPhoto(media=img) for img in source_images[:3]]
-            header = "📝 <b>Ваш пост готов:</b>\n\n"
+            header = f"{user_tag}📝 <b>Ваш пост готов:</b>\n\n"
             full_preview_text = f"{header}{post_text}"
             
             if len(full_preview_text) <= 1024:
@@ -3005,6 +3021,10 @@ async def sources_generate_process(message: Message, state: FSMContext):
         )
         await state.set_state(SourcesGenerationStates.waiting_for_approval)
         
+        # Получаем имя пользователя
+        user = message.from_user
+        username = f"@{user.username}" if user.username else user.full_name
+        
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text="✅ Опубликовать", callback_data="sources_approve"),
@@ -3013,11 +3033,13 @@ async def sources_generate_process(message: Message, state: FSMContext):
             [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_back")]
         ])
         
+        user_tag = f"👤 <b>Сгенерировано пользователем:</b> {username}\n"
+        
         if source_images:
             from aiogram.types import InputMediaPhoto
             media = [InputMediaPhoto(media=img) for img in source_images[:3]]
             
-            header = "📝 <b>Ваш пост готов:</b>\n\n"
+            header = f"{user_tag}📝 <b>Ваш пост готов:</b>\n\n"
             full_preview_text = f"{header}{post_text}"
             
             if len(full_preview_text) <= 1024:
@@ -3122,6 +3144,10 @@ async def layout_description_process(message: Message, state: FSMContext):
         )
         await state.set_state(LayoutDescriptionStates.waiting_for_approval)
         
+        # Получаем имя пользователя
+        user = message.from_user
+        username = f"@{user.username}" if user.username else user.full_name
+        
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text="✅ Опубликовать", callback_data="layout_approve"),
@@ -3131,7 +3157,8 @@ async def layout_description_process(message: Message, state: FSMContext):
         ])
         
         MAX_CAPTION_LENGTH = 1024
-        header = "📐 <b>Описание планировки:</b>\n\n"
+        user_tag = f"👤 <b>Сгенерировано пользователем:</b> {username}\n"
+        header = f"{user_tag}📐 <b>Описание планировки:</b>\n\n"
         full_text = f"{header}{post_text}"
         
         if len(full_text) <= MAX_CAPTION_LENGTH:
@@ -4148,14 +4175,14 @@ async def _generate_post_from_state(message: Message, state: FSMContext):
             
             if photo_paths:
                 try:
-                    if len(photo_paths) == 1:
-                        photo_description = await dependencies.ai_service.analyze_photo(photo_paths[0])
-                    else:
-                        photo_description = await dependencies.ai_service.analyze_multiple_photos(photo_paths)
+                if len(photo_paths) == 1:
+                    photo_description = await dependencies.ai_service.analyze_photo(photo_paths[0])
+                else:
+                    photo_description = await dependencies.ai_service.analyze_multiple_photos(photo_paths)
                 except Exception as e:
                     logger.error(f"Ошибка при анализе фото: {e}", exc_info=True)
                     photo_description = f"Фотографии со строительного объекта. [Ошибка при анализе: {str(e)}]" 
-
+                
                 combined_description = f"{photo_description}\n\n{video_description}" if video_description else photo_description
                 
                 prompt_with_media = f"""{prompt}
@@ -4254,6 +4281,10 @@ async def _generate_post_from_state(message: Message, state: FSMContext):
         )
         await state.set_state(PostNowStates.waiting_for_approval)
         
+        # Получаем имя пользователя
+        user = message.from_user
+        username = f"@{user.username}" if user.username else user.full_name
+        
         # Отправляем пост на согласование (код из оригинального post_now_process_prompt)
         dependencies.telegram_service._draft_photos[message.message_id] = photos.copy()
         
@@ -4272,7 +4303,8 @@ async def _generate_post_from_state(message: Message, state: FSMContext):
             from aiogram.types import InputMediaPhoto
             
             MAX_CAPTION_LENGTH = 1024
-            header = "📝 <b>Черновик поста для согласования:</b>\n\n"
+            user_tag = f"👤 <b>Сгенерировано пользователем:</b> {username}\n"
+            header = f"{user_tag}📝 <b>Черновик поста для согласования:</b>\n\n"
             full_text = f"{header}{post_text}"
             
             if len(photos) == 1:
