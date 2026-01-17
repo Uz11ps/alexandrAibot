@@ -226,17 +226,17 @@ class TelegramService:
                             )
                             # Отправляем текст отдельно если он длинный
                             if len(full_text) > MAX_CAPTION_LENGTH:
-                            text_message = await self.send_long_message(
-                                chat_id=admin_id,
-                                text=full_text,
-                                reply_markup=keyboard,
-                                parse_mode="HTML"
-                            )
-                            # Сохраняем фото для черновика
-                            self._draft_photos[text_message.message_id] = photos.copy()
-                        else:
-                            # Сохраняем фото для черновика
-                            self._draft_photos[sent_messages[0].message_id] = photos.copy()
+                                text_message = await self.send_long_message(
+                                    chat_id=admin_id,
+                                    text=full_text,
+                                    reply_markup=keyboard,
+                                    parse_mode="HTML"
+                                )
+                                # Сохраняем фото для черновика
+                                self._draft_photos[text_message.message_id] = photos.copy()
+                            else:
+                                # Сохраняем фото для черновика
+                                self._draft_photos[sent_messages[0].message_id] = photos.copy()
                 else:
                     # Отправляем только текст
                     sent_message = await self.send_long_message(
