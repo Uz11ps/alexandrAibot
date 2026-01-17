@@ -102,7 +102,7 @@ class AIService:
                     parts = proxy.split(':')
                     normalized_proxies.append(f"http://{parts[2]}:{parts[3]}@{parts[0]}:{parts[1]}")
                 else:
-                    normalized_proxies.append(proxy)
+                normalized_proxies.append(proxy)
             self.proxy_list = normalized_proxies
             
             http_client = httpx.AsyncClient(
@@ -176,8 +176,8 @@ class AIService:
     
     async def analyze_photo(self, photo_path: str, prompt_override: Optional[str] = None) -> str:
         import base64
-        from PIL import Image
-        import io
+            from PIL import Image
+            import io
         try:
             with Image.open(photo_path) as img:
                 if img.mode != 'RGB': img = img.convert('RGB')
@@ -193,7 +193,7 @@ class AIService:
         if prompt_override:
             prompt = prompt_override
             instruction = "ИНСТРУКЦИЯ: Проанализируй изображение."
-        else:
+            else:
             prompt = self._get_photo_analysis_prompt()
             instruction = "ИНСТРУКЦИЯ: Проанализируй фото как технадзор АрхИон."
         
@@ -244,7 +244,21 @@ class AIService:
             sys_prompt = self.prompt_config_service.get_prompt("generate_from_sources", "system_prompt")
 
         if not sys_prompt:
-            sys_prompt = self._get_default_system_prompt()
+            sys_prompt = """Ты – эксперт и редактор компании АрхИон. Твоя задача — написать живой, развернутый экспертный пост на основе новостей рынка.
+
+ПРАВИЛА ГОЛОСА:
+1. ПИШИ ЖИВО: Как будто рассказываешь другу. Убирай сухой канцелярский язык и скучные списки.
+2. ПЕРВОЕ ЛИЦО: Используй «мы в АрхИоне», «на наших объектах», «мы видим по нашим заявкам». 
+3. ТЕРМИНЫ: Вместо \"стройка дома\" пиши \"строительство дома\". ГПЗУ — это Градплан.
+4. ЭСКРОУ: Это деньги в банке до конца стройки, а не поэтапные выплаты. Объясняй это просто.
+5. БЕЗ ТЕХНИЧЕСКОГО ЗАНУДСТВА: Любые новости объясняй через пользу или риски для обычного человека.
+6. ТИПОГРАФИКА: Только обычные дефисы (-).
+
+Структура:
+- Заголовок (без слова "Дайджест")
+- 3-4 коротких абзаца с сутью и пользой
+- Итог: что это значит для клиента прямо сейчас.
+- ХЭШТЕГИ: 5-8 штук в конце."""
 
         topic_str = f"ПРИОРИТЕТНАЯ ТЕМА: {topic}\n" if topic else ""
         user_msg = f"{topic_str}ДАННЫЕ ИЗ ИСТОЧНИКОВ:\n{context}\n\nЗАДАНИЕ: Напиши подробный экспертный пост в стиле делового журналиста. Если тема указана выше — сфокусируйся на ней на 80%."
@@ -307,14 +321,14 @@ class AIService:
             return original_post
 
     def _get_default_system_prompt(self) -> str:
-        return """Ты – редактор делового СМИ, пишущий для обычных людей от лица компании АрхИон. 
+        return """Ты – эксперт и редактор компании АрхИон. Твоя задача — написать живой, развернутый экспертный пост.
 
 ПРАВИЛА ГОЛОСА:
-1. Пиши просто и понятно, как будто объясняешь другу. Убирай канцелярский язык.
-2. Используй «мы в АрхИоне», «на наших объектах».
+1. ПИШИ ЖИВО: Как будто рассказываешь другу. Убирай сухой канцелярский язык.
+2. ПЕРВОЕ ЛИЦО: Используй «мы в АрхИоне», «на наших объектах».
 3. ТЕРМИНЫ: Вместо "стройка дома" пиши "строительство дома". ГПЗУ — это Градплан.
 4. ЭСКРОУ: Это деньги в банке до конца стройки.
-5. ЗАПРЕТ ЖАРГОНА: "клиентоцентричность", "кейс", "лид", "SLA".
+5. БЕЗ ЗАНУДСТВА: Любую деталь объясняй через пользу для жильца.
 6. ТИПОГРАФИКА: Только обычные дефисы (-)."""
 
     def _get_photo_analysis_prompt(self) -> str:

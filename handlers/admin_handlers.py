@@ -4053,12 +4053,19 @@ async def _generate_post_from_state(message: Message, state: FSMContext):
                 if context_from_history:
                     prompt_with_media += f"\n\nКонтекст из успешных похожих постов:\n{context_from_history}"
                 
-                # Для видео используем специальный промпт
+                # Определяем промпт на основе контента и запроса
+                current_prompt_key = "video_description"
+                combined_text_for_detection = (prompt + combined_description).lower()
+                if any(kw in combined_text_for_detection for kw in ["планировк", "чертеж", "план этажа", "экспликация", "план дома"]):
+                    current_prompt_key = "layout_description"
+                    logger.info(f"Обнаружена планировка в видео/фото, используем промпт: {current_prompt_key}")
+
+                # Генерируем текст поста
                 post_text = await dependencies.ai_service.generate_post_text(
                     prompt=prompt_with_media,
                     photos_description=combined_description,
                     context=context_from_history if context_from_history else None,
-                    prompt_key="video_description"  # Используем специальный промпт для видео
+                    prompt_key=current_prompt_key
                 )
             else:
                 prompt_with_video = f"""{prompt}
@@ -4072,12 +4079,19 @@ async def _generate_post_from_state(message: Message, state: FSMContext):
                 if context_from_history:
                     prompt_with_video += f"\n\nКонтекст из успешных похожих постов:\n{context_from_history}"
                 
-                # Для видео используем специальный промпт
+                # Определяем промпт на основе контента и запроса
+                current_prompt_key = "video_description"
+                combined_text_for_detection = (prompt + video_description).lower()
+                if any(kw in combined_text_for_detection for kw in ["планировк", "чертеж", "план этажа", "экспликация", "план дома"]):
+                    current_prompt_key = "layout_description"
+                    logger.info(f"Обнаружена планировка в видео, используем промпт: {current_prompt_key}")
+
+                # Генерируем текст поста
                 post_text = await dependencies.ai_service.generate_post_text(
                     prompt=prompt_with_video,
                     photos_description=video_description,
                     context=context_from_history if context_from_history else None,
-                    prompt_key="video_description"  # Используем специальный промпт для видео
+                    prompt_key=current_prompt_key
                 )
             
             from services.ai_service import clean_ai_response, markdown_to_html

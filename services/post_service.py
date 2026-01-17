@@ -138,11 +138,19 @@ class PostService:
         if context_from_history:
             enhanced_prompt = f"{prompt}\n\nКонтекст из успешных похожих постов:\n{context_from_history}"
         
+        # Определяем промпт на основе контента и запроса
+        current_prompt_key = "generate_post"
+        combined_text_for_detection = (prompt + photos_description).lower()
+        if any(kw in combined_text_for_detection for kw in ["планировк", "чертеж", "план этажа", "экспликация", "план дома"]):
+            current_prompt_key = "layout_description"
+            logger.info(f"Обнаружена планировка в фото, используем промпт: {current_prompt_key}")
+
         # Генерируем пост
         post_text = await self.ai_service.generate_post_text(
             prompt=enhanced_prompt,
             photos_description=photos_description,
-            context=context_from_history if context_from_history else None
+            context=context_from_history if context_from_history else None,
+            prompt_key=current_prompt_key
         )
         
         # Применяем очистку и форматирование
