@@ -17,20 +17,20 @@ def clean_ai_response(text: str) -> str:
     """
     if not text:
         return ""
-        
+
     # Удаляем заголовки-черновики, если они просочились
     text = re.sub(r'📝 Черновик поста для согласования:?\s*', '', text, flags=re.IGNORECASE)
-    
+
     # Заменяем все виды длинных и средних тире на обычный дефис по просьбе заказчика
     text = text.replace(' — ', ' - ')
     text = text.replace(' – ', ' - ')
     text = text.replace('—', '-')
     text = text.replace('–', '-')
-    
+
     # Удаляем технические примечания AI
     lines = text.split('\n')
     cleaned_lines = []
-    
+
     for line in lines:
         stripped = line.strip()
         # Пропускаем разделители, если они в самом начале или пустые
@@ -42,9 +42,9 @@ def clean_ai_response(text: str) -> str:
         if 'Этот текст соответствует' in line or 'соответствует требованиям' in line:
             break
         cleaned_lines.append(line)
-    
+
     cleaned_text = '\n'.join(cleaned_lines).strip()
-    
+
     # Удаляем остаточный мусор в конце
     patterns_to_remove = [
         r'---.*$',
@@ -53,10 +53,10 @@ def clean_ai_response(text: str) -> str:
         r'делая его визуально.*$',
         r'легким для восприятия.*$'
     ]
-    
+
     for pattern in patterns_to_remove:
         cleaned_text = re.sub(pattern, '', cleaned_text, flags=re.MULTILINE | re.IGNORECASE)
-    
+
     return cleaned_text.strip()
 
 
@@ -79,19 +79,19 @@ def markdown_to_html(text: str) -> str:
 
 class AIService:
     """Сервис для взаимодействия с OpenAI API"""
-    
+
     def __init__(self, prompt_config_service=None):
         self.prompt_config_service = prompt_config_service
         self.proxy_list = []
         self.current_proxy_index = 0
         self.current_api_key_index = 0
-        
+
         # Список ключей
         self.api_keys = [settings.OPENAI_API_KEY]
         if settings.OPENAI_API_KEYS:
             additional_keys = [k.strip() for k in settings.OPENAI_API_KEYS.split(',')]
             self.api_keys.extend(additional_keys)
-        
+
         # Настройка прокси
         http_client = None
         if settings.OPENAI_PROXY_ENABLED and settings.OPENAI_PROXY_URL:
@@ -104,19 +104,19 @@ class AIService:
                 else:
                     normalized_proxies.append(proxy)
             self.proxy_list = normalized_proxies
-            
+
             http_client = httpx.AsyncClient(
                 proxy=self.proxy_list[0],
                 timeout=httpx.Timeout(300.0, connect=60.0, read=300.0)
             )
-        
+
         self.client = AsyncOpenAI(api_key=self.api_keys[0], http_client=http_client)
         self.model = settings.OPENAI_MODEL
         self.proxy_enabled = settings.OPENAI_PROXY_ENABLED
-        
+
         # Поддержка temperature
         self.supports_temperature = not (self.model.startswith("gpt-5") or "o1" in self.model.lower())
-    
+
     def _switch_proxy(self):
         if len(self.proxy_list) > 1:
             self.current_proxy_index = (self.current_proxy_index + 1) % len(self.proxy_list)
@@ -128,7 +128,7 @@ class AIService:
             self.client = AsyncOpenAI(api_key=self.api_keys[self.current_api_key_index], http_client=http_client)
             return True
         return False
-    
+
     def _switch_api_key(self):
         if len(self.api_keys) > 1:
             self.current_api_key_index = (self.current_api_key_index + 1) % len(self.api_keys)
@@ -136,17 +136,17 @@ class AIService:
             self.client = AsyncOpenAI(api_key=self.api_keys[self.current_api_key_index])
             return True
         return False
-    
+
     async def generate_post_text(self, prompt: str, context: Optional[str] = None, photos_description: Optional[str] = None, prompt_key: str = "generate_post") -> str:
         if self.prompt_config_service:
             system_prompt = self.prompt_config_service.get_prompt(prompt_key, "system_prompt") or self._get_default_system_prompt()
         else:
             system_prompt = self._get_default_system_prompt()
-        
+
         user_msg = f"ИНСТРУКЦИЯ:\n{system_prompt}\n\nЗАДАНИЕ:\n{prompt}"
         if context: user_msg += f"\n\nКОНТЕКСТ:\n{context}"
         if photos_description: user_msg += f"\n\nОПИСАНИЕ МЕДИА:\n{photos_description}"
-        
+
         try:
             params = {
                 "model": self.model,
@@ -154,7 +154,7 @@ class AIService:
                 "max_completion_tokens": 8000
             }
             if self.supports_temperature: params["temperature"] = 0.7
-            
+
             response = await asyncio.wait_for(self.client.chat.completions.create(**params), timeout=180.0)
             result = response.choices[0].message.content.strip()
             return markdown_to_html(clean_ai_response(result))
@@ -173,11 +173,11 @@ class AIService:
             except Exception as e2:
                 logger.error(f"Критическая ошибка даже на gpt-4o: {e2}")
                 return "📊 <b>Новости АрхИон</b>\n\nСледим за рынком ИЖС. Самые важные обновления подготовим в ближайшее время!"
-    
+
     async def analyze_photo(self, photo_path: str, prompt_override: Optional[str] = None) -> str:
         import base64
-            from PIL import Image
-            import io
+        from PIL import Image
+        import io
         try:
             with Image.open(photo_path) as img:
                 if img.mode != 'RGB': img = img.convert('RGB')
@@ -187,23 +187,23 @@ class AIService:
                 image_data = buf.getvalue()
         except Exception:
             with open(photo_path, "rb") as f: image_data = f.read()
-            
+
         b64 = base64.b64encode(image_data).decode('utf-8')
-        
+
         if prompt_override:
             prompt = prompt_override
             instruction = "ИНСТРУКЦИЯ: Проанализируй изображение."
-            else:
+        else:
             prompt = self._get_photo_analysis_prompt()
             instruction = "ИНСТРУКЦИЯ: Проанализируй фото как технадзор АрхИон."
-        
+
         try:
             response = await asyncio.wait_for(
                 self.client.chat.completions.create(
                     model="gpt-5.2",
                     messages=[{
-            "role": "user",
-            "content": [
+                        "role": "user",
+                        "content": [
                             {"type": "text", "text": f"{instruction}\nЗАДАНИЕ: {prompt}"},
                             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
                         ]
@@ -222,10 +222,10 @@ class AIService:
             d = await self.analyze_photo(p)
             descs.append(f"Фото {i}: {d}")
         return "\n\n".join(descs)
-    
+
     async def generate_post_from_sources(self, source_posts: List[Dict[str, str]], topic: Optional[str] = None) -> str:
         if not source_posts: return self._get_fallback_source_post()
-        
+
         # Группируем данные для ИИ, сохраняя связь текста и ссылки
         context_items = []
         for i, p in enumerate(source_posts[:15], 1): # Берем до 15 источников для полноты
@@ -233,11 +233,11 @@ class AIService:
             source_url = p.get('source', 'Без ссылки')
             if text:
                 context_items.append(f"НОВОСТЬ №{i}:\nТЕКСТ: {text}\nИСТОЧНИК: {source_url}")
-            
+
         context = "\n\n---\n\n".join(context_items)
         if not context:
             return self._get_fallback_source_post()
-        
+
         # Получаем промпт из конфига или используем дефолтный
         sys_prompt = None
         if self.prompt_config_service:
@@ -248,7 +248,7 @@ class AIService:
 
 ПРАВИЛА ГОЛОСА:
 1. ПИШИ ЖИВО: Как будто рассказываешь другу. Убирай сухой канцелярский язык и скучные списки.
-2. ПЕРВОЕ ЛИЦО: Используй «мы в АрхИоне», «на наших объектах», «мы видим по нашим заявкам». 
+2. ПЕРВОЕ ЛИЦО: Используй «мы в АрхИоне», «на наших объектах», «мы видим по нашим заявкам».
 3. ТЕРМИНЫ: Вместо \"стройка дома\" пиши \"строительство дома\". ГПЗУ — это Градплан.
 4. ЭСКРОУ: Это деньги в банке до конца стройки, а не поэтапные выплаты. Объясняй это просто.
 5. БЕЗ ТЕХНИЧЕСКОГО ЗАНУДСТВА: Любые новости объясняй через пользу или риски для обычного человека.
@@ -262,7 +262,7 @@ class AIService:
 
         topic_str = f"ПРИОРИТЕТНАЯ ТЕМА: {topic}\n" if topic else ""
         user_msg = f"{topic_str}ДАННЫЕ ИЗ ИСТОЧНИКОВ:\n{context}\n\nЗАДАНИЕ: Напиши подробный экспертный пост в стиле делового журналиста. Если тема указана выше — сфокусируйся на ней на 80%."
-        
+
         try:
             params = {
                 "model": self.model,
@@ -273,16 +273,16 @@ class AIService:
                 "max_completion_tokens": 5000
             }
             if self.supports_temperature: params["temperature"] = 0.7
-            
+
             response = await asyncio.wait_for(self.client.chat.completions.create(**params), timeout=180.0)
             res = response.choices[0].message.content.strip()
-            
+
             cleaned = clean_ai_response(res)
             if not cleaned or len(cleaned) < 50:
                 raise ValueError("Слишком короткий или пустой ответ от основной модели")
-                
+
             return markdown_to_html(cleaned)
-            
+
         except Exception as e:
             logger.error(f"Ошибка генерации {self.model} по источникам: {e}. Пробую gpt-4o...")
             try:
@@ -302,17 +302,17 @@ class AIService:
                     return markdown_to_html(cleaned)
             except Exception as e2:
                 logger.error(f"Критическая ошибка генерации по источникам: {e2}")
-            
+
             # Фолбэк если ИИ совсем подвел
             links = "\n".join([f"• {p.get('source')}" for p in source_posts[:5] if p.get('source')])
             return f"📊 <b>Новости ИЖС Крым</b>\n\nПроанализировали свежие данные с рынка. Основные тренды: развитие инфраструктуры и новые ипотечные программы.\n\n🔗 <b>Источники:</b>\n{links}"
-    
+
     async def refine_post(self, original_post: str, edits: str) -> str:
         sys_prompt = "Ты редактор АрхИон. Переработай текст с учетом правок, сохранив структуру и объем 1500-2000 симв."
         user_msg = f"ТЕКСТ:\n{original_post}\n\nПРАВКИ:\n{edits}"
         try:
             response = await self.client.chat.completions.create(
-                    model=self.model,
+                model=self.model,
                 messages=[{"role": "user", "content": f"ИНСТРУКЦИЯ:\n{sys_prompt}\n\nЗАДАНИЕ:\n{user_msg}"}],
                 max_completion_tokens=5000
             )
@@ -333,13 +333,13 @@ class AIService:
 
     def _get_photo_analysis_prompt(self) -> str:
         return "Опиши этап работ, материалы, качество и детали на фото как инженер технадзора."
-    
+
     def _get_fallback_source_post(self) -> str:
         return "🏗️ <b>Новости АрхИон</b>\n\nСледим за рынком ИЖС Крыма. Подробности в следующих выпусках!"
 
     async def make_news_standalone(self, text: str) -> str:
         return await self.refine_post(text, "Сделай новость полностью автономной, убери отсылки к прошлому.")
-        
+
     async def analyze_video(self, video_path: str) -> str:
         # Упрощенная версия через извлечение кадров (нужен cv2)
         try:
