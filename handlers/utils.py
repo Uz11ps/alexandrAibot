@@ -131,3 +131,42 @@ async def safe_clear_state(state, callback: CallbackQuery = None):
         except:
             pass
 
+
+async def safe_answer_full_text(message_or_callback, text: str, reply_markup=None, parse_mode="HTML", **kwargs):
+    """
+    Безопасно отправляет длинный текст, разбивая его на части если нужно.
+    Работает как с Message, так и с CallbackQuery.
+    """
+    MAX_LENGTH = 4090
+    
+    # Определяем объект для ответа
+    if isinstance(message_or_callback, CallbackQuery):
+        target = message_or_callback.message
+    else:
+        target = message_or_callback
+    
+    if len(text) <= MAX_LENGTH:
+        return await target.answer(
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode=parse_mode,
+            **kwargs
+        )
+    
+    # Разбиваем текст на части
+    parts = []
+    # Учитываем HTML теги при разбиении - это сложно, но хотя бы разобьем по 4000
+    for i in range(0, len(text), MAX_LENGTH):
+        parts.append(text[i:i+MAX_LENGTH])
+    
+    sent_message = None
+    for i, part in enumerate(parts):
+        # Клавиатуру прикрепляем только к последней части
+        current_markup = reply_markup if i == len(parts) - 1 else None
+        sent_message = await target.answer(
+            text=part,
+            reply_markup=current_markup,
+            parse_mode=parse_mode,
+            **kwargs
+        )
+    return sent_message

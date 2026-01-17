@@ -74,15 +74,47 @@ class TelegramService:
         """
         for admin_id in self.admin_ids:
             try:
-                await self.bot.send_message(
+                await self.send_long_message(
                     chat_id=admin_id,
-                    text=text,
-                    parse_mode="HTML"
+                    text=text
                 )
                 logger.info(f"Уведомление отправлено администратору {admin_id}")
             except Exception as e:
                 logger.error(f"Ошибка при отправке уведомления администратору {admin_id}: {e}")
     
+    async def send_long_message(self, chat_id: int, text: str, reply_markup=None, parse_mode="HTML", **kwargs):
+        """
+        Отправляет длинное сообщение, разбивая его на части если нужно
+        """
+        MAX_LENGTH = 4090 # Оставляем запас
+        
+        if len(text) <= MAX_LENGTH:
+            return await self.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode,
+                **kwargs
+            )
+        
+        # Разбиваем текст на части
+        parts = []
+        for i in range(0, len(text), MAX_LENGTH):
+            parts.append(text[i:i+MAX_LENGTH])
+        
+        sent_message = None
+        for i, part in enumerate(parts):
+            # Клавиатуру прикрепляем только к последней части
+            current_markup = reply_markup if i == len(parts) - 1 else None
+            sent_message = await self.bot.send_message(
+                chat_id=chat_id,
+                text=part,
+                reply_markup=current_markup,
+                parse_mode=parse_mode,
+                **kwargs
+            )
+        return sent_message
+
     def _get_photo_input(self, photo_path: str):
         """Возвращает FSInputFile для локальных файлов или строку для URL"""
         if photo_path.startswith(('http://', 'https://')):
@@ -150,7 +182,7 @@ class TelegramService:
                                 caption=f"{header}📝 Полный текст ниже ⬇️",
                                 parse_mode="HTML"
                             )
-                            text_message = await self.bot.send_message(
+                            text_message = await self.send_long_message(
                                 chat_id=admin_id,
                                 text=full_text,
                                 reply_markup=keyboard,
@@ -194,26 +226,26 @@ class TelegramService:
                             )
                             # Отправляем текст отдельно если он длинный
                             if len(full_text) > MAX_CAPTION_LENGTH:
-                                text_message = await self.bot.send_message(
-                                    chat_id=admin_id,
-                                    text=full_text,
-                                    reply_markup=keyboard,
-                                    parse_mode="HTML"
-                                )
-                                # Сохраняем фото для черновика
-                                self._draft_photos[text_message.message_id] = photos.copy()
-                            else:
-                                # Сохраняем фото для черновика
-                                self._draft_photos[sent_messages[0].message_id] = photos.copy()
+                            text_message = await self.send_long_message(
+                                chat_id=admin_id,
+                                text=full_text,
+                                reply_markup=keyboard,
+                                parse_mode="HTML"
+                            )
+                            # Сохраняем фото для черновика
+                            self._draft_photos[text_message.message_id] = photos.copy()
+                        else:
+                            # Сохраняем фото для черновика
+                            self._draft_photos[sent_messages[0].message_id] = photos.copy()
                 else:
                     # Отправляем только текст
-                    sent_message = await self.bot.send_message(
+                    sent_message = await self.send_long_message(
                         chat_id=admin_id,
                         text=full_text,
                         reply_markup=keyboard,
                         parse_mode="HTML"
                     )
-                
+
                 logger.info(f"Пост отправлен на согласование администратору {admin_id}")
             except Exception as e:
                 logger.error(f"Ошибка при отправке поста на согласование администратору {admin_id}: {e}")
@@ -258,7 +290,7 @@ class TelegramService:
                             photo=photo_input,
                             parse_mode="HTML"
                         )
-                        await self.bot.send_message(
+                        await self.send_long_message(
                             chat_id=channel_id,
                             text=post_text,
                             parse_mode="HTML"
@@ -294,14 +326,14 @@ class TelegramService:
                         )
                         
                         if send_text_separately:
-                            await self.bot.send_message(
+                            await self.send_long_message(
                                 chat_id=channel_id,
                                 text=post_text,
                                 parse_mode="HTML"
                             )
             else:
                 # Отправляем только текст
-                await self.bot.send_message(
+                await self.send_long_message(
                     chat_id=channel_id,
                     text=post_text,
                     parse_mode="HTML"

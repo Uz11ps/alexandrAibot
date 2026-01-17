@@ -15,7 +15,7 @@ from config.settings import settings
 from services import dependencies
 from services.schedule_config import ScheduleConfigService
 from services.post_types_config import PostTypesConfigService
-from handlers.utils import safe_answer_callback, safe_edit_message, safe_clear_state
+from handlers.utils import safe_answer_callback, safe_edit_message, safe_clear_state, safe_answer_full_text
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -1915,10 +1915,16 @@ async def request_edit(callback: CallbackQuery, state: FSMContext):
 
 @router.message(PostApprovalStates.waiting_for_edits)
 async def process_edits(message: Message, state: FSMContext):
-    """Обрабатывает правки от администратора (для обычных черновиков и запланированных постов)"""
+    """Обрабатывает правки от администратора (для обычных черновиков, запланированных постов и 'Опубликовать сейчас')"""
     if not is_admin(message.from_user.id):
         await message.answer("У вас нет доступа.")
         await safe_clear_state(state)
+        return
+    
+    # Проверка на отмену
+    if message.text and message.text.lower().strip() in ['отмена', 'cancel', 'назад']:
+        await safe_clear_state(state)
+        await message.answer("❌ Редактирование отменено.", reply_markup=get_main_menu_keyboard())
         return
     
     if not message.text:
@@ -1940,6 +1946,14 @@ async def process_edits(message: Message, state: FSMContext):
     day_of_week = data.get('scheduled_post_day')  # Проверяем, редактируется ли запланированный пост
     original_post_text = data.get('original_post_text', '')
     original_photos = data.get('original_photos', [])
+    original_photo_paths = data.get('original_photo_paths', [])  # Для функции "Опубликовать сейчас"
+    original_photo_path = data.get('original_photo_path')  # Для обратной совместимости
+    
+    # Если нет списка фото, используем одно фото
+    if not original_photo_paths and original_photo_path:
+        original_photo_paths = [original_photo_path]
+    elif not original_photo_paths and original_photos:
+        original_photo_paths = original_photos
     
     if not original_post_text:
         await message.answer("Не удалось найти исходный текст поста. Попробуйте создать пост заново.")
@@ -1952,9 +1966,17 @@ async def process_edits(message: Message, state: FSMContext):
         # Получаем request_id из состояния
         request_id = data.get('post_request_id')
         
+        # Определяем метод редактирования
+        is_post_now = bool(original_photo_paths)
+        
         # Перерабатываем пост через AI
-        logger.info(f"Переработка поста. Исходный текст: {len(original_post_text)} символов. Правки: {edits}")
-        refined_post = await dependencies.post_service.refine_post(original_post_text, edits, request_id=request_id)
+        if is_post_now and hasattr(dependencies.post_service, 'refine_post_now'):
+            logger.info(f"✅ Используем специальный метод редактирования для 'Опубликовать сейчас' (исходный текст: {len(original_post_text)} символов)")
+            refined_post = await dependencies.post_service.refine_post_now(original_post_text, edits, request_id=request_id)
+        else:
+            logger.info(f"Переработка поста. Исходный текст: {len(original_post_text)} символов. Правки: {edits}")
+            refined_post = await dependencies.post_service.refine_post(original_post_text, edits, request_id=request_id)
+        
         logger.info(f"Пост переработан. Новый текст: {len(refined_post)} символов")
         
         # Если это запланированный пост, обновляем его
@@ -1962,7 +1984,7 @@ async def process_edits(message: Message, state: FSMContext):
             dependencies.scheduled_posts_service.add_scheduled_post(
                 day_of_week=day_of_week,
                 post_text=refined_post,
-                photos=original_photos,
+                photos=original_photo_paths,
                 admin_id=message.from_user.id
             )
             
@@ -1983,6 +2005,91 @@ async def process_edits(message: Message, state: FSMContext):
                 reply_markup=get_main_menu_keyboard(),
                 parse_mode="HTML"
             )
+        elif original_photo_paths:
+            # Это функция "Опубликовать сейчас" или планировка - отправляем на повторное согласование
+            await state.update_data(
+                generated_post_text=refined_post,
+                generated_photo_paths=original_photo_paths,
+                generated_photo_path=original_photo_paths[0] if original_photo_paths else None,
+                post_request_id=request_id  # Сохраняем request_id для дальнейших операций
+            )
+            await state.set_state(PostNowStates.waiting_for_approval)
+            
+            # Сохраняем фото для черновика
+            dependencies.telegram_service._draft_photos[message.message_id] = original_photo_paths.copy()
+            
+            # Отправляем переработанный пост на согласование
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="✅ Принять и опубликовать", callback_data="post_now_approve"),
+                    InlineKeyboardButton(text="✏️ Редактировать", callback_data="post_now_edit")
+                ],
+                [
+                    InlineKeyboardButton(text="❌ Отмена", callback_data="post_now_cancel")
+                ]
+            ])
+            
+            try:
+                from pathlib import Path
+                from aiogram.types import InputMediaPhoto
+                
+                MAX_CAPTION_LENGTH = 1024
+                header = "📝 <b>Черновик поста для согласования (после правок):</b>\n\n"
+                full_text = f"{header}{refined_post}"
+                
+                if len(original_photo_paths) == 1:
+                    # Одно фото
+                    photo_file = Path(original_photo_paths[0])
+                    if photo_file.exists():
+                        if len(full_text) <= MAX_CAPTION_LENGTH:
+                            sent_message = await message.answer_photo(
+                                photo=FSInputFile(original_photo_paths[0]),
+                                caption=full_text,
+                                reply_markup=keyboard,
+                                parse_mode="HTML"
+                            )
+                        else:
+                            sent_message_photo = await message.answer_photo(
+                                photo=FSInputFile(original_photo_paths[0]),
+                                caption=f"{header}📝 Полный текст ниже ⬇️",
+                                parse_mode="HTML"
+                            )
+                            sent_message = await safe_answer_full_text(message, full_text, reply_markup=keyboard)
+                            dependencies.telegram_service._draft_photos[sent_message.message_id] = original_photo_paths.copy()
+                    else:
+                        await safe_answer_full_text(message, full_text, reply_markup=keyboard)
+                else:
+                    # Несколько фото - используем медиагруппу
+                    media = []
+                    for i, photo_path in enumerate(original_photo_paths):
+                        photo_file = Path(photo_path)
+                        if photo_file.exists():
+                            if i == 0 and len(full_text) <= MAX_CAPTION_LENGTH:
+                                media.append(InputMediaPhoto(
+                                    media=FSInputFile(photo_path),
+                                    caption=full_text,
+                                    parse_mode="HTML"
+                                ))
+                            else:
+                                media.append(InputMediaPhoto(media=FSInputFile(photo_path)))
+                    
+                    if media:
+                        sent_messages = await message.answer_media_group(media=media)
+                        if len(full_text) > MAX_CAPTION_LENGTH:
+                            sent_message = await safe_answer_full_text(message, full_text, reply_markup=keyboard)
+                            dependencies.telegram_service._draft_photos[sent_message.message_id] = original_photo_paths.copy()
+                        else:
+                            sent_message = await message.answer(
+                                text="Выберите действие:",
+                                reply_markup=keyboard,
+                                parse_mode="HTML"
+                            )
+                            dependencies.telegram_service._draft_photos[sent_message.message_id] = original_photo_paths.copy()
+                    else:
+                        await safe_answer_full_text(message, full_text, reply_markup=keyboard)
+            except Exception as e:
+                logger.error(f"Ошибка при отправке фото: {e}", exc_info=True)
+                await safe_answer_full_text(message, full_text, reply_markup=keyboard)
         else:
             # Обычный черновик - отправляем на согласование
             # Обновляем историю - помечаем как отправленный на согласование
@@ -2004,8 +2111,8 @@ async def process_edits(message: Message, state: FSMContext):
         await safe_clear_state(state)
     
     except Exception as e:
-        logger.error(f"Ошибка при обработке правок: {e}")
-        await message.answer(f"❌ Ошибка при обработке правок: {str(e)}")
+        logger.error(f"Ошибка при переработке поста: {e}", exc_info=True)
+        await message.answer(f"❌ Ошибка при переработке поста: {str(e)}")
         await safe_clear_state(state)
 
 
@@ -2796,17 +2903,24 @@ async def sources_auto_search(callback: CallbackQuery, state: FSMContext):
         if source_images:
             from aiogram.types import InputMediaPhoto
             media = [InputMediaPhoto(media=img) for img in source_images[:3]]
-            media[0].caption = f"📝 <b>Ваш пост готов:</b>\n\n{post_text[:1000]}"
-            media[0].parse_mode = "HTML"
-            await callback.message.answer_media_group(media=media)
-            if len(post_text) > 1000:
-                await callback.message.answer(f"...{post_text[1000:]}", parse_mode="HTML")
+            header = "📝 <b>Ваш пост готов:</b>\n\n"
+            full_preview_text = f"{header}{post_text}"
+            
+            if len(full_preview_text) <= 1024:
+                media[0].caption = full_preview_text
+                media[0].parse_mode = "HTML"
+                await callback.message.answer_media_group(media=media)
+            else:
+                media[0].caption = f"{header}Полный текст ниже ⬇️"
+                media[0].parse_mode = "HTML"
+                await callback.message.answer_media_group(media=media)
+                await safe_answer_full_text(callback, full_preview_text)
         else:
-            await callback.message.answer(f"📝 <b>Ваш пост готов:</b>\n\n{post_text}", parse_mode="HTML")
+            await safe_answer_full_text(callback, f"📝 <b>Ваш пост готов:</b>\n\n{post_text}")
 
         if unique_links:
             links_text = "🔗 <b>Прямые ссылки на первоисточники:</b>\n\n" + "\n".join([f"• {url}" for url in unique_links[:10]])
-            await callback.message.answer(links_text, parse_mode="HTML", disable_web_page_preview=True)
+            await safe_answer_full_text(callback, links_text, disable_web_page_preview=True)
 
         await callback.message.answer("Выберите действие:", reply_markup=keyboard)
     
@@ -2902,30 +3016,37 @@ async def sources_generate_process(message: Message, state: FSMContext):
         if source_images:
             from aiogram.types import InputMediaPhoto
             media = [InputMediaPhoto(media=img) for img in source_images[:3]]
-            media[0].caption = f"📝 <b>Ваш пост готов:</b>\n\n{post_text[:1000]}"
-            media[0].parse_mode = "HTML"
-            await message.answer_media_group(media=media)
-            if len(post_text) > 1000:
-                await message.answer(f"...{post_text[1000:]}", parse_mode="HTML")
+            
+            header = "📝 <b>Ваш пост готов:</b>\n\n"
+            full_preview_text = f"{header}{post_text}"
+            
+            if len(full_preview_text) <= 1024:
+                media[0].caption = full_preview_text
+                media[0].parse_mode = "HTML"
+                await message.answer_media_group(media=media)
+            else:
+                media[0].caption = f"{header}Полный текст ниже ⬇️"
+                media[0].parse_mode = "HTML"
+                await message.answer_media_group(media=media)
+                await safe_answer_full_text(message, full_preview_text)
         else:
-            await message.answer(f"📝 <b>Ваш пост готов:</b>\n\n{post_text}", parse_mode="HTML")
+            await safe_answer_full_text(message, f"📝 <b>Ваш пост готов:</b>\n\n{post_text}")
 
         if unique_links:
             links_text = "🔗 <b>Найденные источники по теме:</b>\n\n" + "\n".join([f"• {url}" for url in unique_links[:10]])
-            await message.answer(links_text, parse_mode="HTML", disable_web_page_preview=True)
+            await safe_answer_full_text(message, links_text, disable_web_page_preview=True)
 
         await message.answer("Выберите действие:", reply_markup=keyboard)
         
     except Exception as e:
         logger.error(f"Ошибка в sources_generate_process: {e}", exc_info=True)
-        if 'loading_msg' in locals():
-            await loading_msg.delete()
+        # Пытаемся удалить сообщение только если оно еще существует
+        try:
+            if 'loading_msg' in locals():
+                await loading_msg.delete()
+        except:
+            pass
         await message.answer(f"❌ Ошибка при генерации: {str(e)}")
-        
-    except Exception as e:
-        logger.error(f"Ошибка в sources_generate_process: {e}", exc_info=True)
-        await message.answer(f"❌ Ошибка при генерации: {str(e)}")
-        await loading_msg.delete()
 
 # ========== Обработчики функции "Описание планировки" ==========
 
@@ -3026,11 +3147,7 @@ async def layout_description_process(message: Message, state: FSMContext):
                 caption=f"{header}📝 Полный текст ниже ⬇️",
                 parse_mode="HTML"
             )
-            await message.answer(
-                text=full_text,
-                reply_markup=keyboard,
-                parse_mode="HTML"
-            )
+            await safe_answer_full_text(message, full_text, reply_markup=keyboard)
         
     except Exception as e:
         logger.error(f"Ошибка в layout_description_process: {e}", exc_info=True)
@@ -4174,19 +4291,11 @@ async def _generate_post_from_state(message: Message, state: FSMContext):
                             caption=f"{header}📝 Полный текст ниже ⬇️",
                             parse_mode="HTML"
                         )
-                        sent_message = await message.answer(
-                            text=full_text,
-                            reply_markup=keyboard,
-                            parse_mode="HTML"
-                        )
+                        sent_message = await safe_answer_full_text(message, full_text, reply_markup=keyboard)
                         dependencies.telegram_service._draft_photos[sent_message.message_id] = photos.copy()
                     dependencies.telegram_service._draft_photos[sent_message.message_id] = photos.copy()
                 else:
-                    sent_message = await message.answer(
-                        f"📝 <b>Черновик поста для согласования:</b>\n\n{post_text}",
-                        reply_markup=keyboard,
-                        parse_mode="HTML"
-                    )
+                    sent_message = await safe_answer_full_text(message, f"📝 <b>Черновик поста для согласования:</b>\n\n{post_text}", reply_markup=keyboard)
             else:
                 media = []
                 for i, photo_path in enumerate(photos):
@@ -4204,11 +4313,7 @@ async def _generate_post_from_state(message: Message, state: FSMContext):
                 if media:
                     sent_messages = await message.answer_media_group(media=media)
                     if len(full_text) > MAX_CAPTION_LENGTH:
-                        sent_message = await message.answer(
-                            text=full_text,
-                            reply_markup=keyboard,
-                            parse_mode="HTML"
-                        )
+                        sent_message = await safe_answer_full_text(message, full_text, reply_markup=keyboard)
                         dependencies.telegram_service._draft_photos[sent_message.message_id] = photos.copy()
                     else:
                         sent_message = await message.answer(
@@ -4218,11 +4323,7 @@ async def _generate_post_from_state(message: Message, state: FSMContext):
                         )
                         dependencies.telegram_service._draft_photos[sent_message.message_id] = photos.copy()
                 else:
-                    sent_message = await message.answer(
-                        f"📝 <b>Черновик поста для согласования:</b>\n\n{post_text}",
-                        reply_markup=keyboard,
-                        parse_mode="HTML"
-                    )
+                    sent_message = await safe_answer_full_text(message, f"📝 <b>Черновик поста для согласования:</b>\n\n{post_text}", reply_markup=keyboard)
         except Exception as e:
             logger.error(f"Ошибка при отправке фото: {e}", exc_info=True)
             sent_message = await message.answer(
@@ -4252,220 +4353,6 @@ async def post_now_cancel(callback: CallbackQuery, state: FSMContext):
     )
     await safe_clear_state(state)
 
-
-# Модифицируем обработчик process_edits для поддержки функции "Опубликовать сейчас"
-@router.message(PostApprovalStates.waiting_for_edits)
-async def process_edits(message: Message, state: FSMContext):
-    """Обрабатывает правки от администратора (для обычных черновиков, запланированных постов и 'Опубликовать сейчас')"""
-    if not is_admin(message.from_user.id):
-        await message.answer("У вас нет доступа.")
-        await safe_clear_state(state)
-        return
-    
-    # Проверка на отмену
-    if message.text and message.text.lower().strip() in ['отмена', 'cancel', 'назад']:
-        await safe_clear_state(state)
-        await message.answer("❌ Редактирование отменено.", reply_markup=get_main_menu_keyboard())
-        return
-    
-    if not message.text:
-        await message.answer("Пожалуйста, отправьте текстовое сообщение с правками.")
-        return
-    
-    if not dependencies.post_service:
-        await message.answer("Сервис недоступен")
-        await safe_clear_state(state)
-        return
-    
-    edits = message.text.strip()
-    
-    if not edits:
-        await message.answer("Пожалуйста, отправьте текст правок.")
-        return
-    
-    data = await state.get_data()
-    day_of_week = data.get('scheduled_post_day')  # Проверяем, редактируется ли запланированный пост
-    original_post_text = data.get('original_post_text', '')
-    original_photos = data.get('original_photos', [])
-    original_photo_paths = data.get('original_photo_paths', [])  # Для функции "Опубликовать сейчас"
-    original_photo_path = data.get('original_photo_path')  # Для обратной совместимости
-    
-    # Если нет списка фото, используем одно фото
-    if not original_photo_paths and original_photo_path:
-        original_photo_paths = [original_photo_path]
-    
-    if not original_post_text:
-        await message.answer("Не удалось найти исходный текст поста. Попробуйте создать пост заново.")
-        await safe_clear_state(state)
-        return
-    
-    try:
-        await message.answer("⏳ Перерабатываю пост с учетом ваших правок...")
-        
-        # Определяем метод редактирования
-        is_post_now = bool(original_photo_paths)  # Если есть original_photo_paths, это "Опубликовать сейчас"
-        
-        # Получаем request_id из состояния
-        request_id = data.get('post_request_id')
-        
-        # Перерабатываем пост через AI
-        if is_post_now:
-            logger.info(f"✅ Используем специальный метод редактирования для 'Опубликовать сейчас' (исходный текст: {len(original_post_text)} символов)")
-            refined_post = await dependencies.post_service.refine_post_now(original_post_text, edits, request_id=request_id)
-            logger.info(f"✅ Пост 'Опубликовать сейчас' переработан. Новый текст: {len(refined_post)} символов")
-        else:
-            logger.info(f"Переработка поста. Исходный текст: {len(original_post_text)} символов. Правки: {edits}")
-            refined_post = await dependencies.post_service.refine_post(original_post_text, edits, request_id=request_id)
-            logger.info(f"Пост переработан. Новый текст: {len(refined_post)} символов")
-        
-        # Если это запланированный пост, обновляем его
-        if day_of_week and dependencies.scheduled_posts_service:
-            dependencies.scheduled_posts_service.add_scheduled_post(
-                day_of_week=day_of_week,
-                post_text=refined_post,
-                photos=original_photos,
-                admin_id=message.from_user.id
-            )
-            
-            day_names = {
-                'monday': 'Понедельник',
-                'tuesday': 'Вторник',
-                'wednesday': 'Среда',
-                'thursday': 'Четверг',
-                'friday': 'Пятница',
-                'saturday': 'Суббота'
-            }
-            day_name = day_names.get(day_of_week, day_of_week)
-            
-            await message.answer(
-                f"✅ <b>Запланированный пост обновлен!</b>\n\n"
-                f"📅 День: <b>{day_name}</b>\n\n"
-                f"Пост будет опубликован в запланированное время.",
-                reply_markup=get_main_menu_keyboard(),
-                parse_mode="HTML"
-            )
-        elif original_photo_paths:
-            # Это функция "Опубликовать сейчас" - отправляем на повторное согласование
-            await state.update_data(
-                generated_post_text=refined_post,
-                generated_photo_paths=original_photo_paths,
-                generated_photo_path=original_photo_paths[0] if original_photo_paths else None,
-                post_request_id=request_id  # Сохраняем request_id для дальнейших операций
-            )
-            await state.set_state(PostNowStates.waiting_for_approval)
-            
-            # Сохраняем фото для черновика
-            dependencies.telegram_service._draft_photos[message.message_id] = original_photo_paths.copy()
-            
-            # Отправляем переработанный пост на согласование
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="✅ Принять и опубликовать", callback_data="post_now_approve"),
-                    InlineKeyboardButton(text="✏️ Редактировать", callback_data="post_now_edit")
-                ],
-                [
-                    InlineKeyboardButton(text="❌ Отмена", callback_data="post_now_cancel")
-                ]
-            ])
-            
-            try:
-                from pathlib import Path
-                from aiogram.types import InputMediaPhoto
-                
-                MAX_CAPTION_LENGTH = 1024
-                header = "📝 <b>Черновик поста для согласования (после правок):</b>\n\n"
-                full_text = f"{header}{refined_post}"
-                
-                if len(original_photo_paths) == 1:
-                    # Одно фото
-                    photo_file = Path(original_photo_paths[0])
-                    if photo_file.exists():
-                        if len(full_text) <= MAX_CAPTION_LENGTH:
-                            sent_message = await message.answer_photo(
-                                photo=FSInputFile(original_photo_paths[0]),
-                                caption=full_text,
-                                reply_markup=keyboard,
-                                parse_mode="HTML"
-                            )
-                        else:
-                            sent_message_photo = await message.answer_photo(
-                                photo=FSInputFile(original_photo_paths[0]),
-                                caption=f"{header}📝 Полный текст ниже ⬇️",
-                                parse_mode="HTML"
-                            )
-                            sent_message = await message.answer(
-                                text=full_text,
-                                reply_markup=keyboard,
-                                parse_mode="HTML"
-                            )
-                            dependencies.telegram_service._draft_photos[sent_message.message_id] = original_photo_paths.copy()
-                            dependencies.telegram_service._draft_photos[sent_message.message_id] = original_photo_paths.copy()
-                    else:
-                        await message.answer(
-                            f"📝 <b>Черновик поста для согласования (после правок):</b>\n\n{refined_post}",
-                            reply_markup=keyboard,
-                            parse_mode="HTML"
-                        )
-                else:
-                    # Несколько фото - используем медиагруппу
-                    media = []
-                    for i, photo_path in enumerate(original_photo_paths):
-                        photo_file = Path(photo_path)
-                        if photo_file.exists():
-                            if i == 0 and len(full_text) <= MAX_CAPTION_LENGTH:
-                                media.append(InputMediaPhoto(
-                                    media=FSInputFile(photo_path),
-                                    caption=full_text,
-                                    parse_mode="HTML"
-                                ))
-                            else:
-                                media.append(InputMediaPhoto(media=FSInputFile(photo_path)))
-                    
-                    if media:
-                        sent_messages = await message.answer_media_group(media=media)
-                        if len(full_text) > MAX_CAPTION_LENGTH:
-                            sent_message = await message.answer(
-                                text=full_text,
-                                reply_markup=keyboard,
-                                parse_mode="HTML"
-                            )
-                            dependencies.telegram_service._draft_photos[sent_message.message_id] = original_photo_paths.copy()
-                        else:
-                            sent_message = await message.answer(
-                                text="Выберите действие:",
-                                reply_markup=keyboard,
-                                parse_mode="HTML"
-                            )
-                            dependencies.telegram_service._draft_photos[sent_message.message_id] = original_photo_paths.copy()
-                    else:
-                        await message.answer(
-                            f"📝 <b>Черновик поста для согласования (после правок):</b>\n\n{refined_post}",
-                            reply_markup=keyboard,
-                            parse_mode="HTML"
-                        )
-            except Exception as e:
-                logger.error(f"Ошибка при отправке фото: {e}", exc_info=True)
-                await message.answer(
-                    f"📝 <b>Черновик поста для согласования (после правок):</b>\n\n{refined_post}",
-                    reply_markup=keyboard,
-                    parse_mode="HTML"
-                )
-        else:
-            # Обычный черновик - отправляем на согласование
-            await dependencies.post_service.send_for_approval(refined_post, original_photos)
-            
-            await message.answer(
-                "✅ <b>Пост переработан и отправлен на согласование!</b>\n\n"
-                f"Новая длина: {len(refined_post)} символов",
-                parse_mode="HTML"
-            )
-        
-        await safe_clear_state(state)
-    
-    except Exception as e:
-        logger.error(f"Ошибка при переработке поста: {e}", exc_info=True)
-        await message.answer(f"❌ Ошибка при переработке поста: {str(e)}")
-        await safe_clear_state(state)
 
 
 @router.callback_query(F.data == "schedule_edit_post_list")
