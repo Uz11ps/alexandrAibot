@@ -80,13 +80,15 @@ class SchedulerService:
                 )
                 logger.info(f"Настроен пост {day_name}[{post_index}] на {post_time}")
         
-        # Воскресенье - напоминания сотрудникам
-        sun_hour, sun_min = self._parse_time(settings.SCHEDULE_SUNDAY_REMINDER_TIME)
-        self.scheduler.add_job(
-            self._send_sunday_reminders,
-            CronTrigger(day_of_week='sun', hour=sun_hour, minute=sun_min),
-            id='sunday_reminders'
-        )
+        # Воскресенье - напоминания сотрудникам (если включено)
+        if getattr(settings, 'SCHEDULE_SUNDAY_REMINDER_ENABLED', False):
+            sun_hour, sun_min = self._parse_time(settings.SCHEDULE_SUNDAY_REMINDER_TIME)
+            self.scheduler.add_job(
+                self._send_sunday_reminders,
+                CronTrigger(day_of_week='sun', hour=sun_hour, minute=sun_min),
+                id='sunday_reminders'
+            )
+            logger.info(f"Напоминания сотрудникам настроены на воскресенье {settings.SCHEDULE_SUNDAY_REMINDER_TIME}")
         
         # Ежедневный анализ источников (если включен)
         if settings.SOURCE_ANALYSIS_ENABLED:

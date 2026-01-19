@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     SCHEDULE_FRIDAY_TIME: str = "09:00"
     SCHEDULE_SATURDAY_TIME: str = "09:00"
     SCHEDULE_SUNDAY_REMINDER_TIME: str = "10:00"
+    SCHEDULE_SUNDAY_REMINDER_ENABLED: bool = False
     
     # Таймауты для сотрудников (в часах)
     EMPLOYEE_RESPONSE_TIMEOUT: int = 24
@@ -61,7 +62,7 @@ class Settings(BaseSettings):
     GOOGLE_DRIVE_ARCHIVE_FOLDER_ID: Optional[str] = None
     
     # Анализ источников
-    SOURCE_ANALYSIS_ENABLED: bool = True
+    SOURCE_ANALYSIS_ENABLED: bool = False
     SOURCE_ANALYSIS_TIME: str = "12:00"  # Время ежедневного анализа источников
     TELEGRAM_API_ID: Optional[int] = None  # API ID для Telethon (получить на my.telegram.org)
     TELEGRAM_API_HASH: Optional[str] = None  # API Hash для Telethon
