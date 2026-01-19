@@ -182,8 +182,8 @@ class AIService:
 
     async def analyze_photo(self, photo_path: str, prompt_override: Optional[str] = None) -> str:
         import base64
-            from PIL import Image
-            import io
+        from PIL import Image
+        import io
         try:
             with Image.open(photo_path) as img:
                 if img.mode != 'RGB': img = img.convert('RGB')
@@ -199,7 +199,7 @@ class AIService:
         if prompt_override:
             prompt = prompt_override
             instruction = "ИНСТРУКЦИЯ: Проанализируй изображение."
-            else:
+        else:
             prompt = self._get_photo_analysis_prompt()
             instruction = "ИНСТРУКЦИЯ: Проанализируй фото как технадзор АрхИон."
 
