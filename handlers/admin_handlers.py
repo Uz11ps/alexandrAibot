@@ -3014,7 +3014,14 @@ async def sources_generate_process(message: Message, state: FSMContext):
             post_text = await dependencies.ai_service.generate_post_text(prompt=prompt)
             unique_links = []
         
-        await loading_msg.delete()
+        # По просьбе заказчика: добавляем источники прямо в текст поста, если они были
+        if unique_links and "🔗 <b>Найденные источники" not in post_text:
+            post_text += "\n\n🔗 <b>Источники по теме:</b>\n" + "\n".join([f"• {url}" for url in unique_links[:3]])
+        
+        try:
+            await loading_msg.delete()
+        except:
+            pass
         
         # Сохраняем в состояние
         await state.update_data(
