@@ -102,7 +102,7 @@ class AIService:
                     parts = proxy.split(':')
                     normalized_proxies.append(f"http://{parts[2]}:{parts[3]}@{parts[0]}:{parts[1]}")
                 else:
-                normalized_proxies.append(proxy)
+                    normalized_proxies.append(proxy)
             self.proxy_list = normalized_proxies
             
             http_client = httpx.AsyncClient(
@@ -151,7 +151,7 @@ class AIService:
             params = {
                 "model": self.model,
                 "messages": [
-                    {"role": "system", "content": system_prompt},
+                        {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_msg}
                 ],
                 "max_completion_tokens": 8000
@@ -167,8 +167,8 @@ class AIService:
                 # Резервная попытка на gpt-4o
                 response = await self.client.chat.completions.create(
                     model="gpt-4o",
-                    messages=[
-                    {"role": "system", "content": system_prompt},
+                                    messages=[
+                                        {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_msg}
                 ],
                     max_tokens=4000,
@@ -182,8 +182,8 @@ class AIService:
 
     async def analyze_photo(self, photo_path: str, prompt_override: Optional[str] = None) -> str:
         import base64
-        from PIL import Image
-        import io
+            from PIL import Image
+            import io
         try:
             with Image.open(photo_path) as img:
                 if img.mode != 'RGB': img = img.convert('RGB')
@@ -199,7 +199,7 @@ class AIService:
         if prompt_override:
             prompt = prompt_override
             instruction = "ИНСТРУКЦИЯ: Проанализируй изображение."
-        else:
+            else:
             prompt = self._get_photo_analysis_prompt()
             instruction = "ИНСТРУКЦИЯ: Проанализируй фото как технадзор АрхИон."
 
@@ -319,7 +319,7 @@ class AIService:
         try:
             response = await self.client.chat.completions.create(
                     model=self.model,
-                messages=[
+                    messages=[
                     {"role": "system", "content": sys_prompt},
                     {"role": "user", "content": user_msg}
                 ],
