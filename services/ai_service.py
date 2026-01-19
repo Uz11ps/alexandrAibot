@@ -30,7 +30,7 @@ def clean_ai_response(text: str) -> str:
     # Удаляем технические примечания AI
     lines = text.split('\n')
     cleaned_lines = []
-
+    
     for line in lines:
         stripped = line.strip()
         # Пропускаем разделители, если они в самом начале или пустые
@@ -42,9 +42,9 @@ def clean_ai_response(text: str) -> str:
         if 'Этот текст соответствует' in line or 'соответствует требованиям' in line:
             break
         cleaned_lines.append(line)
-
+    
     cleaned_text = '\n'.join(cleaned_lines).strip()
-
+    
     # Удаляем остаточный мусор в конце
     patterns_to_remove = [
         r'---.*$',
@@ -53,10 +53,10 @@ def clean_ai_response(text: str) -> str:
         r'делая его визуально.*$',
         r'легким для восприятия.*$'
     ]
-
+    
     for pattern in patterns_to_remove:
         cleaned_text = re.sub(pattern, '', cleaned_text, flags=re.MULTILINE | re.IGNORECASE)
-
+    
     return cleaned_text.strip()
 
 
@@ -79,19 +79,19 @@ def markdown_to_html(text: str) -> str:
 
 class AIService:
     """Сервис для взаимодействия с OpenAI API"""
-
+    
     def __init__(self, prompt_config_service=None):
         self.prompt_config_service = prompt_config_service
         self.proxy_list = []
         self.current_proxy_index = 0
         self.current_api_key_index = 0
-
+        
         # Список ключей
         self.api_keys = [settings.OPENAI_API_KEY]
         if settings.OPENAI_API_KEYS:
             additional_keys = [k.strip() for k in settings.OPENAI_API_KEYS.split(',')]
             self.api_keys.extend(additional_keys)
-
+        
         # Настройка прокси
         http_client = None
         if settings.OPENAI_PROXY_ENABLED and settings.OPENAI_PROXY_URL:
@@ -102,21 +102,21 @@ class AIService:
                     parts = proxy.split(':')
                     normalized_proxies.append(f"http://{parts[2]}:{parts[3]}@{parts[0]}:{parts[1]}")
                 else:
-                    normalized_proxies.append(proxy)
+                normalized_proxies.append(proxy)
             self.proxy_list = normalized_proxies
-
+            
             http_client = httpx.AsyncClient(
                 proxy=self.proxy_list[0],
                 timeout=httpx.Timeout(300.0, connect=60.0, read=300.0)
             )
-
+        
         self.client = AsyncOpenAI(api_key=self.api_keys[0], http_client=http_client)
         self.model = settings.OPENAI_MODEL
         self.proxy_enabled = settings.OPENAI_PROXY_ENABLED
 
         # Поддержка temperature
         self.supports_temperature = not (self.model.startswith("gpt-5") or "o1" in self.model.lower())
-
+    
     def _switch_proxy(self):
         if len(self.proxy_list) > 1:
             self.current_proxy_index = (self.current_proxy_index + 1) % len(self.proxy_list)
@@ -128,7 +128,7 @@ class AIService:
             self.client = AsyncOpenAI(api_key=self.api_keys[self.current_api_key_index], http_client=http_client)
             return True
         return False
-
+    
     def _switch_api_key(self):
         if len(self.api_keys) > 1:
             self.current_api_key_index = (self.current_api_key_index + 1) % len(self.api_keys)
@@ -136,21 +136,24 @@ class AIService:
             self.client = AsyncOpenAI(api_key=self.api_keys[self.current_api_key_index])
             return True
         return False
-
+    
     async def generate_post_text(self, prompt: str, context: Optional[str] = None, photos_description: Optional[str] = None, prompt_key: str = "generate_post") -> str:
         if self.prompt_config_service:
             system_prompt = self.prompt_config_service.get_prompt(prompt_key, "system_prompt") or self._get_default_system_prompt()
         else:
             system_prompt = self._get_default_system_prompt()
-
-        user_msg = f"ИНСТРУКЦИЯ:\n{system_prompt}\n\nЗАДАНИЕ:\n{prompt}"
+        
+        user_msg = f"ЗАДАНИЕ:\n{prompt}"
         if context: user_msg += f"\n\nКОНТЕКСТ:\n{context}"
         if photos_description: user_msg += f"\n\nОПИСАНИЕ МЕДИА:\n{photos_description}"
 
         try:
             params = {
                 "model": self.model,
-                "messages": [{"role": "user", "content": user_msg}],
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_msg}
+                ],
                 "max_completion_tokens": 8000
             }
             if self.supports_temperature: params["temperature"] = 0.7
@@ -164,7 +167,10 @@ class AIService:
                 # Резервная попытка на gpt-4o
                 response = await self.client.chat.completions.create(
                     model="gpt-4o",
-                    messages=[{"role": "user", "content": user_msg}],
+                    messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_msg}
+                ],
                     max_tokens=4000,
                     temperature=0.7
                 )
@@ -202,8 +208,8 @@ class AIService:
                 self.client.chat.completions.create(
                     model="gpt-5.2",
                     messages=[{
-                        "role": "user",
-                        "content": [
+            "role": "user",
+            "content": [
                             {"type": "text", "text": f"{instruction}\nЗАДАНИЕ: {prompt}"},
                             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
                         ]
@@ -312,8 +318,11 @@ class AIService:
         user_msg = f"ТЕКСТ:\n{original_post}\n\nПРАВКИ:\n{edits}"
         try:
             response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": f"ИНСТРУКЦИЯ:\n{sys_prompt}\n\nЗАДАНИЕ:\n{user_msg}"}],
+                    model=self.model,
+                messages=[
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": user_msg}
+                ],
                 max_completion_tokens=5000
             )
             return markdown_to_html(clean_ai_response(response.choices[0].message.content.strip()))
@@ -333,7 +342,7 @@ class AIService:
 
     def _get_photo_analysis_prompt(self) -> str:
         return "Опиши этап работ, материалы, качество и детали на фото как инженер технадзора."
-
+    
     def _get_fallback_source_post(self) -> str:
         return "🏗️ <b>Новости АрхИон</b>\n\nСледим за рынком ИЖС Крыма. Подробности в следующих выпусках!"
 

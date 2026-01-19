@@ -127,11 +127,8 @@ class PostService:
         if self.post_history_service:
             context_from_history = self.post_history_service.get_context_for_generation(prompt)
         
-        # Анализируем фото
-        if len(photo_paths) == 1:
-            photos_description = await self.ai_service.analyze_photo(photo_paths[0])
-        else:
-            photos_description = await self.ai_service.analyze_multiple_photos(photo_paths)
+        # Анализируем фото (по просьбе Дарьи только первое, чтобы не перегружать ИИ)
+        photos_description = await self.ai_service.analyze_photo(photo_paths[0]) if photo_paths else "Нет фото"
         
         # Добавляем контекст из истории к промпту
         enhanced_prompt = prompt

@@ -3649,11 +3649,8 @@ async def post_now_process_prompt(message: Message, state: FSMContext):
             
             # Если есть и фото, и видео - анализируем оба
             if photo_paths:
-                # Анализируем фото
-                if len(photo_paths) == 1:
-                    photo_description = await dependencies.ai_service.analyze_photo(photo_paths[0])
-                else:
-                    photo_description = await dependencies.ai_service.analyze_multiple_photos(photo_paths)
+                # Анализируем фото (только первое по просьбе Дарьи)
+                photo_description = await dependencies.ai_service.analyze_photo(photo_paths[0])
                 
                 # Объединяем описания
                 combined_description = f"{photo_description}\n\n{video_description}" if video_description else photo_description
@@ -4179,10 +4176,8 @@ async def _generate_post_from_state(message: Message, state: FSMContext):
             
             if photo_paths:
                 try:
-                    if len(photo_paths) == 1:
-                        photo_description = await dependencies.ai_service.analyze_photo(photo_paths[0])
-                    else:
-                        photo_description = await dependencies.ai_service.analyze_multiple_photos(photo_paths)
+                    # По просьбе Дарьи: анализируем только одно фото (первое), чтобы не перегружать ИИ
+                    photo_description = await dependencies.ai_service.analyze_photo(photo_paths[0])
                 except Exception as e:
                     logger.error(f"Ошибка при анализе фото: {e}", exc_info=True)
                     photo_description = f"Фотографии со строительного объекта. [Ошибка при анализе: {str(e)}]" 
