@@ -2818,7 +2818,7 @@ async def _perform_sources_search(query: Optional[str] = None) -> Dict:
 
     # Фильтруем и объединяем
     keywords = ['ижс', 'крым', 'севастополь', 'закон', 'стройка', 'дом', 'земля', 'ипотека', 'участок', 'новости']
-    query_words = query.lower().split() if query else []
+    query_words = [w.lower() for w in query.split() if len(w) > 2] if query else []
         
     final_sources = []
     unique_links = []
@@ -2846,8 +2846,11 @@ async def _perform_sources_search(query: Optional[str] = None) -> Dict:
         
         is_relevant = False
         if query_words:
+            # Считаем совпадения слов длиннее 2 символов
             matches = sum(1 for qw in query_words if qw in combined_text)
-            if matches >= (len(query_words) + 1) // 2:
+            # Более мягкий фильтр: хотя бы 1 слово если слов мало, или 30% совпадения
+            threshold = 1 if len(query_words) <= 2 else max(1, len(query_words) // 3)
+            if matches >= threshold:
                 is_relevant = True
         else:
             if any(k in combined_text for k in keywords):
@@ -2859,6 +2862,16 @@ async def _perform_sources_search(query: Optional[str] = None) -> Dict:
             seen_links.add(link)
             if p.get('image'):
                 source_images.append(p['image'])
+    
+    # Если результатов все еще мало, берем любые свежие новости по ИЖС
+    if len(final_sources) < 3:
+        for p in sources_data:
+            link = p.get('source')
+            if link not in seen_links and any(k in f"{p.get('title', '')} {p.get('text', '')}".lower() for k in keywords):
+                final_sources.append(p)
+                unique_links.append(link)
+                seen_links.add(link)
+                if len(final_sources) >= 5: break
             
     # Если результатов всё еще мало и есть запрос - пробуем расширенный поиск
     if len(final_sources) < 3 and query and not web_results:
@@ -3015,7 +3028,7 @@ async def sources_generate_process(message: Message, state: FSMContext):
             unique_links = []
         
         # По просьбе заказчика: добавляем источники прямо в текст поста, если они были
-        if unique_links and "🔗 <b>Найденные источники" not in post_text:
+        if unique_links and "🔗 Источники по теме" not in post_text:
             post_text += "\n\n🔗 <b>Источники по теме:</b>\n" + "\n".join([f"• {url}" for url in unique_links[:3]])
         
         try:
@@ -3044,13 +3057,13 @@ async def sources_generate_process(message: Message, state: FSMContext):
             [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_back")]
         ])
         
-        user_tag = f"👤 <b>Сгенерировано пользователем:</b> {username}\n"
+        user_tag = f"👤 <b>Автор:</b> {username}\n"
         
         if source_images:
             from aiogram.types import InputMediaPhoto
             media = [InputMediaPhoto(media=img) for img in source_images[:3]]
             
-            header = f"{user_tag}📝 <b>Ваш пост готов:</b>\n\n"
+            header = f"{user_tag}📝 <b>Черновик поста:</b>\n\n"
             full_preview_text = f"{header}{post_text}"
             
             if len(full_preview_text) <= 1024:
@@ -3063,12 +3076,9 @@ async def sources_generate_process(message: Message, state: FSMContext):
                 await message.answer_media_group(media=media)
                 await safe_answer_full_text(message, full_preview_text)
         else:
-            await safe_answer_full_text(message, f"📝 <b>Ваш пост готов:</b>\n\n{post_text}")
+            await safe_answer_full_text(message, f"{user_tag}📝 <b>Черновик поста:</b>\n\n{post_text}")
 
-        if unique_links:
-            links_text = "🔗 <b>Найденные источники по теме:</b>\n\n" + "\n".join([f"• {url}" for url in unique_links[:10]])
-            await safe_answer_full_text(message, links_text, disable_web_page_preview=True)
-
+        # Больше не отправляем источники отдельным сообщением, они уже внутри post_text
         await message.answer("Выберите действие:", reply_markup=keyboard)
         
     except Exception as e:
